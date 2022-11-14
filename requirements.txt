@@ -1,0 +1,8 @@
+python-telegram-bot
+python-dotenv
+tweepy
+twitter-dl
+requests>=2.20.0
+aiohttp>=3.4.4
+
+
