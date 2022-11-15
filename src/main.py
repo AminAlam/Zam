@@ -79,7 +79,7 @@ class Database():
         cursor = self.conn.cursor()
         cursor.execute('select * from Tweets where tweet_id = ?', (tweet_id,))
         rows = cursor.fetchall()
-        if len(rows) > 0:
+        if len(rows) > 0 and rows[0][4] == 'Success':
             return True
         else:
             return False
