@@ -8,17 +8,10 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from pathlib import Path
 import sqlite3
 import datetime as dt
+import utils
 
 creds_file = "/home/amin/Documents/Twitter_Parser/src/creds.json"
 db_conf_file = "/home/amin/Documents/Twitter_Parser/src/db_conf.json"
-def read_credentials():
-    with open(creds_file) as f:
-        creds = json.load(f)
-    return creds
-
-# Authenticate to Twitter
-creds = read_credentials()
-
 
 class Database():
     def __init__(self) -> None:
@@ -47,8 +40,8 @@ class Database():
 
     def create_table(self, create_table_sql):
         try:
-            c = self.conn.cursor()
-            c.execute(create_table_sql)
+            cursor = self.conn.cursor()
+            cursor.execute(create_table_sql)
         except sqlite3.Error as e:
             print(e)
 
@@ -81,6 +74,15 @@ class Database():
             self.conn.commit()
         except Exception as e:
             self.error_log(e)
+
+    def check_tweet_existence(self, tweet_id):
+        cursor = self.conn.cursor()
+        cursor.execute('select * from Tweets where tweet_id = ?', (tweet_id,))
+        rows = cursor.fetchall()
+        if len(rows) > 0:
+            return True
+        else:
+            return False
 
 
 
@@ -172,23 +174,26 @@ class TelegramBot():
             media_array = []
             tg_text = f"{tg_text} \n\n🔴 <a href='{tweet_url}'>{tw_screen_name}</a>"
             tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
-            # tg_text = tg_text.encode('utf-16-le')
-            if len(tweet['media']) > 0:
-                for indx, media in enumerate(tweet['media']):
-                    if indx==0:
-                        caption = tg_text
-                    else:
-                        caption = ""
-                    if media[1] == "photo":
-                        media_tmp = InputMediaPhoto(media[0], caption=caption, parse_mode="HTML")
-                    elif media[1] == "video":
-                        media_tmp = InputMediaVideo(media[0], caption=caption, parse_mode="HTML")
-                    media_array.append(media_tmp)
-                self.bot.sendMediaGroup(chat_id=self.CHAT_ID,media=media_array,timeout=1000)
+            if not self.db_log.check_tweet_existence(tweet_id):
+                if len(tweet['media']) > 0:
+                    for indx, media in enumerate(tweet['media']):
+                        if indx==0:
+                            caption = tg_text
+                        else:
+                            caption = ""
+                        if media[1] == "photo":
+                            media_tmp = InputMediaPhoto(media[0], caption=caption, parse_mode="HTML")
+                        elif media[1] == "video":
+                            media_tmp = InputMediaVideo(media[0], caption=caption, parse_mode="HTML")
+                        media_array.append(media_tmp)
+                    self.bot.sendMediaGroup(chat_id=self.CHAT_ID,media=media_array,timeout=1000)
+                else:
+                    self.bot.sendMessage(chat_id=self.CHAT_ID, text=tg_text, parse_mode="HTML",disable_web_page_preview=True,timeout=1000)
+                log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Success'}
+                return True, 'Success', log_args
             else:
-                self.bot.sendMessage(chat_id=self.CHAT_ID, text=tg_text, parse_mode="HTML",disable_web_page_preview=True,timeout=1000)
-            log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Success'}
-            return True, 'Success', log_args
+                log_args = {'tweet_id': tweet_id, 'tweet_text': '', 'user_name': '', 'status': 'Already Posted'}
+                return False, 'Already Posted', log_args
         except Exception as e:
             db_log.error_log(e)
             log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Failed'}
@@ -207,6 +212,7 @@ class TelegramBot():
 
 
 if __name__ == "__main__":
+    creds = utils.read_credentials(creds_file)
     db_log = Database()
     twitter_api = TwitterClient(creds, db_log)
     bot = TelegramBot(creds, twitter_api, db_log)
