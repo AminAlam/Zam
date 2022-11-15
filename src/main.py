@@ -69,7 +69,7 @@ class Database():
 
             cursor = self.conn.cursor()
             time_now = dt.datetime.now()
-            rows = [(tweet_id, tweet_text, user_name, time_now, status, None)]
+            rows = [(tweet_id, tweet_text, user_name, status, time_now, None)]
             cursor.executemany('insert into Tweets values (?, ?, ?, ?, ?, ?)', rows)
             self.conn.commit()
         except Exception as e:
@@ -79,7 +79,7 @@ class Database():
         cursor = self.conn.cursor()
         cursor.execute('select * from Tweets where tweet_id = ?', (tweet_id,))
         rows = cursor.fetchall()
-        if len(rows) > 0 and rows[0][4] == 'Success':
+        if len(rows) > 0 and rows[0][3] == 'Success':
             return True
         else:
             return False
@@ -87,7 +87,6 @@ class Database():
 
 
 class TwitterClient(object):
-
     def __init__(self, creds, db_log):
         self.db_log = db_log
         self.creds = creds
@@ -136,7 +135,6 @@ class TwitterClient(object):
 
 
 class TelegramBot():
-
     def __init__(self, creds, twitter_api, db_log) -> None:
         self.twitter_api = twitter_api
         self.db_log = db_log
