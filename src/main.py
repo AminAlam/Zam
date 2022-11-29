@@ -9,6 +9,7 @@ from pathlib import Path
 import sqlite3
 import datetime as dt
 import utils
+from persiantools.jdatetime import JalaliDate
 
 creds_file = "/home/amin/Documents/Twitter_Parser/src/creds.json"
 db_conf_file = "/home/amin/Documents/Twitter_Parser/src/db_conf.json"
@@ -105,7 +106,11 @@ class TwitterClient(object):
         if '?' in tweet_url:
             tweet_url = tweet_url.split('?')[0]
         id = tweet_url.split("/")[-1]
-        tweet = self.Client.get_tweet(id, expansions=["attachments.media_keys", "author_id", "entities.mentions.username"], media_fields=["url", "preview_image_url", "type", "variants"], tweet_fields=["author_id"], user_fields=["username"])
+        tweet = self.Client.get_tweet(id, expansions=["attachments.media_keys", "author_id", "entities.mentions.username"], media_fields=["url", "preview_image_url", "type", "variants"], tweet_fields=["author_id", "created_at"], user_fields=["username"])
+        
+        tweet_date = tweet.data['created_at']
+        tweet_date_persian = JalaliDate(tweet_date).strftime("%Y/%m/%d")
+
         media_url = []
         if "media" in tweet.includes:
             media = tweet.includes['media']
@@ -130,7 +135,7 @@ class TwitterClient(object):
             media_link = ""
             pass
 
-        tweet = {'text': tweet_body, 'media': media_url, 'displayname': displayname, 'tweet_id': id, 'name': username, 'url': tweet_url}
+        tweet = {'text': tweet_body, 'media': media_url, 'displayname': displayname, 'tweet_id': id, 'name': username, 'url': tweet_url, 'tweet_date_persian':tweet_date_persian}
         return tweet
 
 
@@ -143,7 +148,6 @@ class TelegramBot():
         self.TOKEN = creds["TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
         self.bot = Bot(token=self.TOKEN)
-        
 
     def start(self, update, context=None):
         update.message.reply_text('Hello {}'.format(update.message.from_user.first_name))
@@ -169,8 +173,10 @@ class TelegramBot():
             tw_screen_name = tweet['displayname']
             tweet_url = tweet['url']
             tw_name = tweet['name']
+            tweet_date_persian = tweet['tweet_date_persian']
             media_array = []
-            tg_text = f"{tg_text} \n\n🔴 <a href='{tweet_url}'>{tw_screen_name}</a>"
+            tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
+            tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
             tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
             if not self.db_log.check_tweet_existence(tweet_id):
                 if len(tweet['media']) > 0:
@@ -202,7 +208,6 @@ class TelegramBot():
             user_name = update.message.chat['username']
         except:
             user_name = update.message['from']['username']
-
         if user_name in self.creds["ADMIN_ID"]:
             return True, user_name
         else:
