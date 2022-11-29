@@ -1,0 +1,7 @@
+{
+    "TABLES_LIST" : [
+        " CREATE TABLE IF NOT EXISTS Tweets (tweet_id text NOT NULL, tweet_text text NOT NULL, user_name text NOT NULL, status text NOT NULL, time DATETIME NOT NULL, id integer primary key autoincrement);",
+        " CREATE TABLE IF NOT EXISTS Errors (error text NOT NULL, time DATETIME NOT NULL, id integer primary key autoincrement);"
+    ],
+    "DB_NAME" : "/home/amin/Documents/Twitter_Parser/src/database/Log.db"
+}
