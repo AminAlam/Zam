@@ -109,8 +109,10 @@ class TwitterClient(object):
         tweet = self.Client.get_tweet(id, expansions=["attachments.media_keys", "author_id", "entities.mentions.username"], media_fields=["url", "preview_image_url", "type", "variants"], tweet_fields=["author_id", "created_at"], user_fields=["username"])
         
         tweet_date = tweet.data['created_at']
+        # converting to Tehran time-zone
+        tweet_date = tweet_date + dt.timedelta(hours=3, minutes=30)
         tweet_date_persian = JalaliDate(tweet_date).strftime("%Y/%m/%d")
-
+        
         media_url = []
         if "media" in tweet.includes:
             media = tweet.includes['media']
