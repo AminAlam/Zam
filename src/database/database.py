@@ -1,5 +1,5 @@
 import sys
-sys.path.append('../')
+sys.path.append('/home/amin/Documents/Twitter_Parser/src')
 from configs import *
 
 
