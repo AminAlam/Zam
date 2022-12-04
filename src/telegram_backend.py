@@ -71,7 +71,7 @@ class TelegramBot():
     def callback_query_handler(self, update, context=None):
         user_name = self.get_user_name(update)
         query = update.callback_query
-        query_text = query.data.split('_')
+        query_text = query.data.split('|')
         query_type = query_text[0]
         query_dict = query.to_dict()
         chat_id = query_dict['message']['chat']['id']
@@ -92,7 +92,7 @@ class TelegramBot():
             desired_time_persian = utils.covert_austria_time_to_iran_time(desired_time)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
 
-            button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL_{tweet_id}")]
+            button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL|{tweet_id}")]
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
             success_message = f"Tweet has been scheduled for {desired_time_persian} (Iran time-zone).\n You can edit the text or caption of the message till the sending time.\n Also, you can cancel it via Cancel button."
             query.edit_message_text(text=success_message, reply_markup=reply_markup)
@@ -143,7 +143,7 @@ class TelegramBot():
         button_list = []
         for i in range(0, 9*30, 30):
             time_option = time_now + dt.timedelta(minutes=i)
-            inline_key = InlineKeyboardButton(f"{i} min later", callback_data=f"TIME_{time_option}_{tweet_id}")
+            inline_key = InlineKeyboardButton(f"{i} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
             button_list.append(inline_key)
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
         markup_text = "Please select a time for sending this tweet."
@@ -188,7 +188,6 @@ class TelegramBot():
 
         return menu
 
-
 class TelegramAdminBot(TelegramBot):
     def __init__(self, creds, twitter_api, db_log) -> None:
         super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api)
@@ -228,8 +227,8 @@ class TelegramAdminBot(TelegramBot):
         chat_id = update.message.chat_id
 
         if tweet['parent_tweet_id']:
-            button_list = [InlineKeyboardButton("Get full thread", callback_data=f"GetFullThread_{tweet['name']}_{tweet['tweet_id']}"),
-                           InlineKeyboardButton("Get only this tweet", callback_data=f"GetThisTweet_{tweet['name']}_{tweet['tweet_id']}")] 
+            button_list = [InlineKeyboardButton("Get full thread", callback_data=f"GetFullThread|{tweet['name']}|{tweet['tweet_id']}"),
+                           InlineKeyboardButton("Get only this tweet", callback_data=f"GetThisTweet|{tweet['name']}|{tweet['tweet_id']}")] 
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=2))
             success_message = f"It seems that this tweet is a reply to another tweet. Do you want to get the full thread or just this tweet?"
             update.message.reply_text(text=success_message, reply_markup=reply_markup)
@@ -259,7 +258,6 @@ class TelegramAdminBot(TelegramBot):
         tweet['text'] = thread_text
         self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
 
-    
     def make_thread_text(self, tweet_url):
         tweet = self.twitter_api.get_tweet(tweet_url)
         thread_text = tweet['text']
@@ -269,8 +267,6 @@ class TelegramAdminBot(TelegramBot):
             return f"{self.make_thread_text(tweet_url)[0]} \n\n {thread_text}", tweet_url
         else:
             return thread_text, tweet_url
-
-            
 
     def check_for_tweet_in_line(self):
         # check for tweets in line every 30 seconds
@@ -317,7 +313,7 @@ class TelegramAdminBot(TelegramBot):
 
                             self.db_log.remove_tweet_from_line(tweet_id)
 
-                            button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT_{desired_time_persian}_{tweet_id}")]
+                            button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
                             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
                             success_message = f"Sent successfully."
 
