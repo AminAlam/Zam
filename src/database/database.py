@@ -83,8 +83,8 @@ class Database():
             media_list = json.dumps(media_list)
 
             cursor = self.conn.cursor()
-            rows = [(tweet_id, tweet_text, media_list , None, None, None)]
-            cursor.executemany('insert into Tweets_Line values (?, ?, ?, ?, ?, ?)', rows)
+            rows = [(tweet_id, tweet_text, media_list , None, None, None, None)]
+            cursor.executemany('insert into Tweets_Line values (?, ?, ?, ?, ?, ?, ?)', rows)
             self.conn.commit()
 
         except Exception as e:
@@ -111,11 +111,12 @@ class Database():
         except Exception as e:
             self.error_log(e)
 
-    def set_sending_time_for_tweet_in_line(self, tweet_id, sending_time, tweet_text, entities):
+    def set_sending_time_for_tweet_in_line(self, tweet_id, sending_time, tweet_text, entities, query):
         try:
             entities = json.dumps(entities)
+            query = json.dumps(query)
             cursor = self.conn.cursor()
-            cursor.execute('update Tweets_Line set sending_time = ?, tweet_text = ?, entities = ? where tweet_id = ?', (sending_time, tweet_text, entities, tweet_id))
+            cursor.execute('update Tweets_Line set sending_time = ?, tweet_text = ?, entities = ?, query = ? where tweet_id = ?', (sending_time, tweet_text, entities, query, tweet_id))
             self.conn.commit()
 
         except Exception as e:
