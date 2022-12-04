@@ -130,3 +130,13 @@ class Database():
             return rows
         except Exception as e:
             self.error_log(e)
+
+    def get_tweet_by_tweet_id(self, tweet_id):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('select * from Tweets where tweet_id = ?', (tweet_id,))
+            rows = cursor.fetchone()
+            return rows
+        except Exception as e:
+            self.error_log(e)
+            return None
