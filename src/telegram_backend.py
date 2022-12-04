@@ -84,8 +84,7 @@ class TelegramBot():
         if query_type == 'TIME':
             tweet_id = query_text[2]
             desired_time = query_text[1]
-            desired_time_persian = dt.datetime.strptime(desired_time, '%Y-%m-%d %H:%M:%S') + dt.timedelta(hours=2, minutes=30)
-            desired_time_persian = f"{JalaliDate(desired_time_persian).strftime('%Y/%m/%d')} {desired_time_persian.strftime('%H:%M:%S')}"
+            desired_time_persian = utils.covert_austria_time_to_iran_time(desired_time)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
 
             button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL_{tweet_id}")]
@@ -98,6 +97,13 @@ class TelegramBot():
             reply_markup, markup_text = self.make_time_options(tweet_id)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=None, tweet_text=tg_text, entities=None, query=None)
             query.edit_message_text(text=markup_text, reply_markup=reply_markup)
+
+        if query_type == 'SENT':
+            tweet_id = query_text[2]
+            sent_time = query_text[1]
+            tweet = self.db_log.get_tweet_by_tweet_id(tweet_id)
+            admin_user_name = tweet[2]
+            query.answer(text=f"Sent by {admin_user_name} at {sent_time} Iran time-zone")
 
     def make_time_options(self, tweet_id):
         time_now = dt.datetime.now()
@@ -154,6 +160,7 @@ class TelegramBot():
                 for tweet in tweets_line:
                     tweet_sent_time = tweet[3]
                     if tweet_sent_time:
+                        desired_time_persian = utils.covert_austria_time_to_iran_time(tweet_sent_time)
                         tweet_sent_time = dt.datetime.strptime(tweet_sent_time, '%Y-%m-%d %H:%M:%S')
                         if tweet_sent_time <= dt.datetime.now():
                             query = tweet[5]
@@ -164,8 +171,10 @@ class TelegramBot():
 
                             for entity in entities:
                                 converted_format = None
+                                
                                 if 'url' in entity:
                                     converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length'], url=entity['url'])
+                                
                                 else:
                                     converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length']) 
 
@@ -176,6 +185,7 @@ class TelegramBot():
                             tg_text = tweet[1]
                             media_list = tweet[2]
                             media_list = json.loads(media_list)
+                            
                             if media_list != '':    
                                 media_array = self.make_media_array(tg_text, media_list, entities=entities)
                                 self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID,media=media_array,timeout=1000)
@@ -184,7 +194,7 @@ class TelegramBot():
 
                             self.db_log.remove_tweet_from_line(tweet_id)
 
-                            button_list = [InlineKeyboardButton("Sent ✅", callback_data="None")]
+                            button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT_{desired_time_persian}_{tweet_id}")]
                             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
                             success_message = f"Sent successfully."
 
