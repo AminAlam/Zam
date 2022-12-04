@@ -1,8 +1,5 @@
 from configs import * 
 
-import tweepy
-from persiantools.jdatetime import JalaliDate
-
 class TwitterClient(object):
     def __init__(self, creds, db_log):
         self.db_log = db_log

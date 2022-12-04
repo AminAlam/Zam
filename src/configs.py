@@ -13,5 +13,9 @@ import utils
 from telegram import Bot, InputMediaPhoto, InputMediaVideo, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, MessageEntity
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
+from persiantools.jdatetime import JalaliDate
+
+import tweepy
+
 creds_file = "/home/amin/Documents/Twitter_Parser/src/creds.json"
 db_conf_file = "/home/amin/Documents/Twitter_Parser/src/db_conf.json"

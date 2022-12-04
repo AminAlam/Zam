@@ -53,8 +53,8 @@ class TelegramBot():
                     else:
                         sent_message = self.bot.sendMessage(chat_id=self.CHAT_ID, text=tg_text, parse_mode="HTML",disable_web_page_preview=True,timeout=1000)
                     
-                    reply_markup = self.make_time_options(tweet_id)
-                    self.bot.sendMessage(chat_id=self.CHAT_ID, text="Please select a time for this tweet to be posted.", reply_markup=reply_markup, timeout=1000, reply_to_message_id=sent_message.message_id)
+                    reply_markup, markup_text = self.make_time_options(tweet_id)
+                    self.bot.sendMessage(chat_id=self.CHAT_ID, text=markup_text, reply_markup=reply_markup, timeout=1000, reply_to_message_id=sent_message.message_id)
 
                     self.db_log.add_tweet_to_line(tweet_line_args)
 
@@ -73,21 +73,31 @@ class TelegramBot():
         query = update.callback_query
         query_text = query.data.split('_')
         query_type = query_text[0]
-
+        query_dict = query.to_dict()
         tg_text = query.message.reply_to_message.text
         entities = query.to_dict()['message']['reply_to_message']['entities']
         
         if tg_text == None:
             tg_text = query.message.reply_to_message.caption
             entities = query.to_dict()['message']['reply_to_message']['caption_entities']
+
         if query_type == 'TIME':
             tweet_id = query_text[2]
             desired_time = query_text[1]
-            self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities)
+            desired_time_persian = dt.datetime.strptime(desired_time, '%Y-%m-%d %H:%M:%S') + dt.timedelta(hours=2, minutes=30)
+            desired_time_persian = f"{JalaliDate(desired_time_persian).strftime('%Y/%m/%d')} {desired_time_persian.strftime('%H:%M:%S')}"
+            self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
 
-            button_list = [InlineKeyboardButton("Scheduled ✅", callback_data="None"),]
+            button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL_{tweet_id}")]
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
-            query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
+            success_message = f"Tweet has been scheduled for {desired_time_persian} (Iran timp-zone).\n You can cancel it via Cancel button."
+            query.edit_message_text(text=success_message, reply_markup=reply_markup)
+
+        if query_type == 'CANCEL':
+            tweet_id = query_text[1]
+            reply_markup, markup_text = self.make_time_options(tweet_id)
+            self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=None, tweet_text=tg_text, entities=None, query=None)
+            query.edit_message_text(text=markup_text, reply_markup=reply_markup)
 
     def make_time_options(self, tweet_id):
         time_now = dt.datetime.now()
@@ -98,7 +108,8 @@ class TelegramBot():
             inline_key = InlineKeyboardButton(f"{i} min later", callback_data=f"TIME_{time_option}_{tweet_id}")
             button_list.append(inline_key)
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
-        return reply_markup
+        markup_text = "Please select a time for sending this tweet."
+        return reply_markup, markup_text
 
     def get_user_name(self, update):
         user_name = None
@@ -145,6 +156,8 @@ class TelegramBot():
                     if tweet_sent_time:
                         tweet_sent_time = dt.datetime.strptime(tweet_sent_time, '%Y-%m-%d %H:%M:%S')
                         if tweet_sent_time <= dt.datetime.now():
+                            query = tweet[5]
+                            query = json.loads(query)
                             entities = tweet[4]
                             entities = json.loads(entities)
                             entities_list_converted = []
@@ -165,11 +178,20 @@ class TelegramBot():
                             media_list = json.loads(media_list)
                             if media_list != '':    
                                 media_array = self.make_media_array(tg_text, media_list, entities=entities)
-                                self.bot.sendMediaGroup(chat_id=self.CHAT_ID,media=media_array,timeout=1000)
+                                self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID,media=media_array,timeout=1000)
                             else:
                                 self.bot.sendMessage(chat_id=self.MAIN_CHANNEL_CHAT_ID, text=tg_text,disable_web_page_preview=True,timeout=1000, entities=entities)
+
                             self.db_log.remove_tweet_from_line(tweet_id)
-            time.sleep(1*60)
+
+                            button_list = [InlineKeyboardButton("Sent ✅", callback_data="None")]
+                            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
+                            success_message = f"Sent successfully."
+
+                            self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
+
+                            
+            time.sleep(1*10)
 
 class TelegramAdminBot(TelegramBot):
     def __init__(self, creds, twitter_api, db_log) -> None:
