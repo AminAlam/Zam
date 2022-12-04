@@ -2,7 +2,9 @@
     "TABLES_LIST" : [
         " CREATE TABLE IF NOT EXISTS Tweets (tweet_id text NOT NULL, tweet_text text NOT NULL, user_name text NOT NULL, status text NOT NULL, time DATETIME NOT NULL, admin text, id integer primary key autoincrement);",
         " CREATE TABLE IF NOT EXISTS Errors (error text NOT NULL, time DATETIME NOT NULL, id integer primary key autoincrement);",
-        " CREATE TABLE IF NOT EXISTS Tweets_Line (tweet_id text NOT NULL, tweet_text text DEFAULT NULL, media text DEFAULT NULL, sending_time DATETIME DEFAULT NULL, entities text DEFAULT NULL, query text DEFAULT NULL, id integer primary key autoincrement);"
+        " CREATE TABLE IF NOT EXISTS Tweets_Line (tweet_id text NOT NULL, tweet_text text DEFAULT NULL, media text DEFAULT NULL, sending_time DATETIME DEFAULT NULL, entities text DEFAULT NULL, query text DEFAULT NULL, id integer primary key autoincrement);",
+        " CREATE TABLE IF NOT EXISTS States (chat_id text NOT NULL, state text, id integer primary key autoincrement);"
     ],
+
     "DB_NAME" : "/home/amin/Documents/Twitter_Parser/src/database/Log.db"
 }

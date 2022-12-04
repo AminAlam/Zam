@@ -1,5 +1,4 @@
 from configs import * 
-
 class TelegramBot():
     def __init__(self, creds, db_log, twitter_api) -> None:
         self.creds = creds
@@ -70,16 +69,22 @@ class TelegramBot():
                 return False, 'Error: {}'.format(e), log_args
 
     def callback_query_handler(self, update, context=None):
+        user_name = self.get_user_name(update)
         query = update.callback_query
         query_text = query.data.split('_')
         query_type = query_text[0]
         query_dict = query.to_dict()
-        tg_text = query.message.reply_to_message.text
-        entities = query.to_dict()['message']['reply_to_message']['entities']
-        
-        if tg_text == None:
-            tg_text = query.message.reply_to_message.caption
-            entities = query.to_dict()['message']['reply_to_message']['caption_entities']
+        chat_id = query_dict['message']['chat']['id']
+
+        try:
+            tg_text = query.message.reply_to_message.text
+            entities = query.to_dict()['message']['reply_to_message']['entities']
+
+            if tg_text == None:
+                tg_text = query.message.reply_to_message.caption
+                entities = query.to_dict()['message']['reply_to_message']['caption_entities']
+        except:
+            pass
 
         if query_type == 'TIME':
             tweet_id = query_text[2]
@@ -89,7 +94,7 @@ class TelegramBot():
 
             button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL_{tweet_id}")]
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
-            success_message = f"Tweet has been scheduled for {desired_time_persian} (Iran timp-zone).\n You can cancel it via Cancel button."
+            success_message = f"Tweet has been scheduled for {desired_time_persian} (Iran time-zone).\n You can edit the text or caption of the message till the sending time.\n Also, you can cancel it via Cancel button."
             query.edit_message_text(text=success_message, reply_markup=reply_markup)
 
         if query_type == 'CANCEL':
@@ -104,6 +109,33 @@ class TelegramBot():
             tweet = self.db_log.get_tweet_by_tweet_id(tweet_id)
             admin_user_name = tweet[2]
             query.answer(text=f"Sent by {admin_user_name} at {sent_time} Iran time-zone")
+
+        if query_type == 'GetFullThread':
+            tweet_id = query_text[2]
+            tweet_user_name = query_text[1]
+            tweet_url = f"https://twitter.com/{tweet_user_name}/status/{tweet_id}"
+            self.send_thread_tweet(tweet_url, chat_id=chat_id, user_name=user_name)
+
+            args = {'chat_id': chat_id, 'state': None}
+            utils.set_state(self.db_log.conn, args)
+
+            button_list = [InlineKeyboardButton("Full thread selected", callback_data="None")]
+            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
+            query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
+
+        if query_type == 'GetThisTweet':
+            tweet_id = query_text[2]
+            tweet_user_name = query_text[1]
+            tweet_url = f"https://twitter.com/{tweet_user_name}/status/{tweet_id}"
+            tweet = self.twitter_api.get_tweet(tweet_url)
+            self.send_tweet(update, tweet, chat_id=query.message.chat_id)
+
+            args = {'chat_id': chat_id, 'state': None}
+            utils.set_state(self.db_log.conn, args)
+
+            button_list = [InlineKeyboardButton("Single Tweet selected", callback_data="None")]
+            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
+            query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
 
     def make_time_options(self, tweet_id):
         time_now = dt.datetime.now()
@@ -131,7 +163,11 @@ class TelegramBot():
                 try:
                     user_name = update.message.from_user.username
                 except:
-                    pass
+                    
+                    try:
+                        user_name = update.callback_query.from_user.username
+                    except:
+                        pass
 
         return user_name
 
@@ -152,16 +188,104 @@ class TelegramBot():
 
         return menu
 
+
+class TelegramAdminBot(TelegramBot):
+    def __init__(self, creds, twitter_api, db_log) -> None:
+        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api)
+        self.CHAT_ID = creds["ADMIN_CHAT_ID"]
+        self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
+        self.CHANNEL_NAME = creds["CHANNEL_NAME"]
+        self.MAIN_CHANNEL_CHAT_ID = creds["MAIN_CHANNEL_CHAT_ID"]
+        self.bot = Bot(token=self.TOKEN)
+
+        updater = Updater(self.TOKEN , use_context=True)
+        dp = updater.dispatcher
+        dp.add_handler(CommandHandler("start", self.start))
+        dp.add_handler(MessageHandler(Filters.text, self.text_handler))
+        dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
+        updater.start_polling()
+
+        self.check_for_tweet_in_line_thread = threading.Thread(target=self.check_for_tweet_in_line)
+        self.check_for_tweet_in_line_thread.start()
+
+    def text_handler(self, update, context=None):
+        admin_bool, _ = self.check_admin(update)
+        chat_id = update.message.chat_id
+        args = {'chat_id': chat_id, 'state': None}
+        utils.set_state(self.db_log.conn, args)
+
+        if admin_bool:
+            tweet_url = update.message.text
+
+            if "twitter.com" in tweet_url:
+                self.receive_tweet(update)
+            else:
+                update.message.reply_text('Please send a valid tweet url')
+
+    def receive_tweet(self, update):
+        tweet_url = update.message.text
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        chat_id = update.message.chat_id
+
+        if tweet['parent_tweet_id']:
+            button_list = [InlineKeyboardButton("Get full thread", callback_data=f"GetFullThread_{tweet['name']}_{tweet['tweet_id']}"),
+                           InlineKeyboardButton("Get only this tweet", callback_data=f"GetThisTweet_{tweet['name']}_{tweet['tweet_id']}")] 
+            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=2))
+            success_message = f"It seems that this tweet is a reply to another tweet. Do you want to get the full thread or just this tweet?"
+            update.message.reply_text(text=success_message, reply_markup=reply_markup)
+            args = {'chat_id': chat_id, 'state': 'GET_FULL_THREAD_OR_THIS_TWEET'}
+            utils.set_state(self.db_log.conn, args)
+        else:
+            self.send_tweet(update, tweet)
+
+    def send_tweet(self, update=None, tweet=None, chat_id=None, user_name=None):
+        if user_name is None:
+            admin_bool, user_name = self.check_admin(update)
+        else:
+            admin_bool, _ = self.check_admin(update)
+        status = self.on_data(tweet)
+        if chat_id:
+            self.bot.send_message(chat_id=chat_id, text=status[1])
+        else:
+            update.message.reply_text(status[1])
+        log_args = status[-1]
+        log_args['user_name'] = user_name
+        log_args['admin'] = admin_bool
+        self.db_log.tweet_log(log_args)
+
+    def send_thread_tweet(self, tweet_url, chat_id, user_name):
+        thread_text, tweet_url = self.make_thread_text(tweet_url)
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        tweet['text'] = thread_text
+        self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
+
+    
+    def make_thread_text(self, tweet_url):
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        thread_text = tweet['text']
+
+        if tweet['parent_tweet_id']:
+            tweet_url = f"https://twitter.com/{tweet['name']}/status/{tweet['parent_tweet_id']}"
+            return f"{self.make_thread_text(tweet_url)[0]} \n\n {thread_text}", tweet_url
+        else:
+            return thread_text, tweet_url
+
+            
+
     def check_for_tweet_in_line(self):
         # check for tweets in line every 30 seconds
         while True:
             tweets_line = self.db_log.get_tweets_line()
+
             if tweets_line:
+
                 for tweet in tweets_line:
                     tweet_sent_time = tweet[3]
+
                     if tweet_sent_time:
                         desired_time_persian = utils.covert_austria_time_to_iran_time(tweet_sent_time)
                         tweet_sent_time = dt.datetime.strptime(tweet_sent_time, '%Y-%m-%d %H:%M:%S')
+
                         if tweet_sent_time <= dt.datetime.now():
                             query = tweet[5]
                             query = json.loads(query)
@@ -174,7 +298,6 @@ class TelegramBot():
                                 
                                 if 'url' in entity:
                                     converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length'], url=entity['url'])
-                                
                                 else:
                                     converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length']) 
 
@@ -199,45 +322,8 @@ class TelegramBot():
                             success_message = f"Sent successfully."
 
                             self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
-
                             
             time.sleep(1*10)
-
-class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log) -> None:
-        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api)
-        self.CHAT_ID = creds["ADMIN_CHAT_ID"]
-        self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
-        self.CHANNEL_NAME = creds["CHANNEL_NAME"]
-        self.MAIN_CHANNEL_CHAT_ID = creds["MAIN_CHANNEL_CHAT_ID"]
-        self.bot = Bot(token=self.TOKEN)
-
-        updater = Updater(self.TOKEN , use_context=True)
-        dp = updater.dispatcher
-        dp.add_handler(CommandHandler("start", self.start))
-        dp.add_handler(MessageHandler(Filters.text, self.receive_tweet))
-        dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
-        updater.start_polling()
-
-        self.check_for_tweet_in_line_thread = threading.Thread(target=self.check_for_tweet_in_line)
-        self.check_for_tweet_in_line_thread.start()
-
-    def receive_tweet(self, update, context=None):
-        admin_bool, user_name = self.check_admin(update)
-        if admin_bool:
-            tweet_url = update.message.text
-            if "twitter.com" in tweet_url:
-                tweet = self.twitter_api.get_tweet(tweet_url)
-                status = self.on_data(tweet)
-                update.message.reply_text(status[1])
-                log_args = status[-1]
-                log_args['user_name'] = user_name
-                log_args['admin'] = admin_bool
-                self.db_log.tweet_log(log_args)
-            else:
-                update.message.reply_text('Please send a valid tweet url')
-
-
 
 class TelegramSuggestedTweetsBot(TelegramBot):
     def __init__(self, creds, twitter_api, db_log) -> None:
@@ -268,6 +354,3 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             self.db_log.tweet_log(log_args)
         else:
             update.message.reply_text('Please send a valid tweet url')
-            
-        
-
