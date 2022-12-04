@@ -74,3 +74,58 @@ class Database():
             return True
         else:
             return False
+
+    def add_tweet_to_line(self, args):
+        try:
+            tweet_id = args['tweet_id']
+            tweet_text = args['tweet_text']
+            media_list = args['media_list']
+            media_list = json.dumps(media_list)
+
+            cursor = self.conn.cursor()
+            rows = [(tweet_id, tweet_text, media_list , None, None, None)]
+            cursor.executemany('insert into Tweets_Line values (?, ?, ?, ?, ?, ?)', rows)
+            self.conn.commit()
+
+        except Exception as e:
+            self.error_log(e)
+    
+    def remove_tweet_from_line(self, tweet_id):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('delete from Tweets_Line where tweet_id = ?', (tweet_id,))
+            self.conn.commit()
+
+        except Exception as e:
+            self.error_log(e)
+
+    def get_tweet_from_line(self, tweet_id):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('select * from Tweets_Line where tweet_id = ?', (tweet_id,))
+            rows = cursor.fetchall()
+            if len(rows) > 0:
+                return rows[0]
+            else:
+                return None
+        except Exception as e:
+            self.error_log(e)
+
+    def set_sending_time_for_tweet_in_line(self, tweet_id, sending_time, tweet_text, entities):
+        try:
+            entities = json.dumps(entities)
+            cursor = self.conn.cursor()
+            cursor.execute('update Tweets_Line set sending_time = ?, tweet_text = ?, entities = ? where tweet_id = ?', (sending_time, tweet_text, entities, tweet_id))
+            self.conn.commit()
+
+        except Exception as e:
+            self.error_log(e)
+
+    def get_tweets_line(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('select * from Tweets_Line')
+            rows = cursor.fetchall()
+            return rows
+        except Exception as e:
+            self.error_log(e)
