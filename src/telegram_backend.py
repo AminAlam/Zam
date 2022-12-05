@@ -283,41 +283,44 @@ class TelegramAdminBot(TelegramBot):
                         tweet_sent_time = dt.datetime.strptime(tweet_sent_time, '%Y-%m-%d %H:%M:%S')
 
                         if tweet_sent_time <= dt.datetime.now():
-                            query = tweet[5]
-                            query = json.loads(query)
-                            entities = tweet[4]
-                            entities = json.loads(entities)
-                            entities_list_converted = []
+                            try:
+                                query = tweet[5]
+                                query = json.loads(query)
+                                entities = tweet[4]
+                                entities = json.loads(entities)
+                                entities_list_converted = []
 
-                            for entity in entities:
-                                converted_format = None
+                                for entity in entities:
+                                    converted_format = None
+                                    
+                                    if 'url' in entity:
+                                        converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length'], url=entity['url'])
+                                    else:
+                                        converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length']) 
+
+                                    entities_list_converted.append(converted_format)
+                                    
+                                entities = entities_list_converted
+                                tweet_id = tweet[0]
+                                tg_text = tweet[1]
+                                media_list = tweet[2]
+                                media_list = json.loads(media_list)
                                 
-                                if 'url' in entity:
-                                    converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length'], url=entity['url'])
+                                if media_list != '':    
+                                    media_array = self.make_media_array(tg_text, media_list, entities=entities)
+                                    self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID,media=media_array,timeout=1000)
                                 else:
-                                    converted_format = MessageEntity(type=entity['type'], offset=entity['offset'], length=entity['length']) 
+                                    self.bot.sendMessage(chat_id=self.MAIN_CHANNEL_CHAT_ID, text=tg_text,disable_web_page_preview=True,timeout=1000, entities=entities)
 
-                                entities_list_converted.append(converted_format)
-                                
-                            entities = entities_list_converted
-                            tweet_id = tweet[0]
-                            tg_text = tweet[1]
-                            media_list = tweet[2]
-                            media_list = json.loads(media_list)
-                            
-                            if media_list != '':    
-                                media_array = self.make_media_array(tg_text, media_list, entities=entities)
-                                self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID,media=media_array,timeout=1000)
-                            else:
-                                self.bot.sendMessage(chat_id=self.MAIN_CHANNEL_CHAT_ID, text=tg_text,disable_web_page_preview=True,timeout=1000, entities=entities)
+                                self.db_log.remove_tweet_from_line(tweet_id)
 
-                            self.db_log.remove_tweet_from_line(tweet_id)
+                                button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
+                                reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
+                                success_message = f"Sent successfully."
 
-                            button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
-                            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
-                            success_message = f"Sent successfully."
-
-                            self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
+                                self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
+                            except Exception as e:
+                                self.db_log.error_log(e)
                             
             time.sleep(1*10)
 
