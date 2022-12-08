@@ -1,7 +1,6 @@
-import sys
-sys.path.append('/home/amin/Documents/Twitter_Parser/src')
 from configs import *
-
+import sys
+sys.path.append(f'{working_dir}')
 
 class Database():
     def __init__(self) -> None:
@@ -12,6 +11,7 @@ class Database():
     def create_connection(self):
         conn = None
         db_file = self.db_config['DB_NAME']
+        db_file = f'{working_dir}/{db_file}'
         try:
             conn = sqlite3.connect(db_file, check_same_thread=False)
             print('Connected to database using SQLite', sqlite3.version)

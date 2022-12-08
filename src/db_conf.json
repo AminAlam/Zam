@@ -6,5 +6,5 @@
         " CREATE TABLE IF NOT EXISTS States (chat_id text NOT NULL, state text, id integer primary key autoincrement);"
     ],
 
-    "DB_NAME" : "/home/amin/Documents/Twitter_Parser/src/database/Log.db"
+    "DB_NAME" : "/database/Log.db"
 }

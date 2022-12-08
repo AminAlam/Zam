@@ -17,5 +17,8 @@ from persiantools.jdatetime import JalaliDate
 
 import tweepy
 
-creds_file = "/home/amin/Documents/Twitter_Parser/src/creds.json"
-db_conf_file = "/home/amin/Documents/Twitter_Parser/src/db_conf.json"
+working_dir = os.path.dirname(os.path.abspath(__file__))
+creds_file = f"{working_dir}/creds.json"
+db_conf_file = f"{working_dir}/db_conf.json"
+
+time_diff = {'hours':1, 'minutes':30}
