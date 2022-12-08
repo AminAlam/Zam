@@ -208,10 +208,13 @@ class TelegramAdminBot(TelegramBot):
         self.check_for_tweet_in_line_thread.start()
 
     def text_handler(self, update, context=None):
-        admin_bool, _ = self.check_admin(update)
-        chat_id = update.message.chat_id
-        args = {'chat_id': chat_id, 'state': None}
-        utils.set_state(self.db_log.conn, args)
+        try:
+            admin_bool, _ = self.check_admin(update)
+            chat_id = update.message.chat_id
+            args = {'chat_id': chat_id, 'state': None}
+            utils.set_state(self.db_log.conn, args)
+        except:
+            pass
 
         if admin_bool:
             tweet_url = update.message.text
