@@ -89,7 +89,7 @@ class TelegramBot():
         if query_type == 'TIME':
             tweet_id = query_text[2]
             desired_time = query_text[1]
-            desired_time_persian = utils.covert_austria_time_to_iran_time(desired_time)
+            desired_time_persian = utils.covert_tweet_time_to_iran_time(desired_time)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
 
             button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL|{tweet_id}")]
@@ -189,14 +189,14 @@ class TelegramBot():
         return menu
 
 class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log) -> None:
+    def __init__(self, creds, twitter_api, db_log, suggestions_bot) -> None:
         super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api)
         self.CHAT_ID = creds["ADMIN_CHAT_ID"]
         self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
         self.MAIN_CHANNEL_CHAT_ID = creds["MAIN_CHANNEL_CHAT_ID"]
         self.bot = Bot(token=self.TOKEN)
-
+        self.suggestions_bot = suggestions_bot
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
@@ -279,7 +279,7 @@ class TelegramAdminBot(TelegramBot):
                     tweet_sent_time = tweet[3]
 
                     if tweet_sent_time:
-                        desired_time_persian = utils.covert_austria_time_to_iran_time(tweet_sent_time)
+                        desired_time_persian = utils.covert_tweet_time_to_iran_time(tweet_sent_time)
                         tweet_sent_time = dt.datetime.strptime(tweet_sent_time, '%Y-%m-%d %H:%M:%S')
 
                         if tweet_sent_time <= dt.datetime.now():
@@ -317,8 +317,10 @@ class TelegramAdminBot(TelegramBot):
                                 button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
                                 reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
                                 success_message = f"Sent successfully."
-
-                                self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
+                                try:
+                                    self.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
+                                except:
+                                    self.suggestions_bot.bot.editMessageText(chat_id=query['message']['chat']['id'], message_id=query['message']['message_id'], text=success_message, reply_markup=reply_markup)
                             except Exception as e:
                                 self.db_log.error_log(e)
                             
