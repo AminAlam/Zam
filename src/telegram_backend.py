@@ -141,7 +141,7 @@ class TelegramBot():
         time_now = dt.datetime.now()
         time_now = time_now.replace(second=0, microsecond=0)
         button_list = []
-        for i in range(0, 9*30, 30):
+        for i in range(0, 16*30, 30):
             time_option = time_now + dt.timedelta(minutes=i)
             inline_key = InlineKeyboardButton(f"{i} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
             button_list.append(inline_key)
@@ -207,6 +207,9 @@ class TelegramAdminBot(TelegramBot):
         self.check_for_tweet_in_line_thread = threading.Thread(target=self.check_for_tweet_in_line)
         self.check_for_tweet_in_line_thread.start()
 
+        self.time_counter_thread = threading.Thread(target=self.time_counter)
+        self.time_counter_thread.start()
+
     def text_handler(self, update, context=None):
         try:
             admin_bool, _ = self.check_admin(update)
@@ -270,6 +273,32 @@ class TelegramAdminBot(TelegramBot):
             return f"{self.make_thread_text(tweet_url)[0]} \n\n {thread_text}", tweet_url
         else:
             return thread_text, tweet_url
+        
+    def time_counter(self):
+        message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom"
+        mahsa_death_time = dt.datetime(2022, 9, 16, 19, 0)
+        message_id = utils.get_time_counter_message_id(self.db_log.conn)
+        if message_id is None:
+            time_now = dt.datetime.now()
+            diff_time = time_now - mahsa_death_time
+            message_caption = utils.form_time_counter_message(diff_time, message_txt)
+            media_array = self.make_media_array(message_caption, [['https://revolution.aminalam.info/static/images/wlf_flag.png', 'photo']])
+            message_id = self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID, media=media_array)
+            message_id = message_id[0]['message_id']
+            utils.set_time_counter_message_id(self.db_log.conn, message_id)
+
+        while True:
+            try:
+                time_now = dt.datetime.now()
+                diff_time =  time_now - mahsa_death_time
+                message_caption = utils.form_time_counter_message(diff_time, message_txt)
+                media_array = self.make_media_array(diff_time, [['https://revolution.aminalam.info/static/images/wlf_flag.png', 'photo']])
+                self.bot.editMessageMedia(chat_id=self.MAIN_CHANNEL_CHAT_ID, message_id=message_id, media=InputMediaPhoto('https://revolution.aminalam.info/static/images/wlf_flag.png', message_caption))
+            except Exception as e:
+                print(e)
+                pass
+            time.sleep(61)
+
 
     def check_for_tweet_in_line(self):
         # check for tweets in line every 30 seconds
