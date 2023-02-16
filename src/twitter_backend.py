@@ -20,7 +20,6 @@ class TwitterClient(object):
             tweet_url = tweet_url.split('?')[0]
         id = tweet_url.split("/")[-1]
         tweet = self.Client.get_tweet(id, expansions=["attachments.media_keys", "author_id", "entities.mentions.username"], media_fields=["url", "preview_image_url", "type", "variants"], tweet_fields=["author_id", "created_at", "referenced_tweets"], user_fields=["username"])
-        
         if 'referenced_tweets' in tweet.data:
             for field in tweet.data['referenced_tweets']:
                 if field['type'] == 'replied_to':

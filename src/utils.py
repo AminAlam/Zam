@@ -42,3 +42,25 @@ def check_state(conn, args):
         return None
     else:
         return states[0][1]
+    
+def get_time_counter_message_id(conn):
+    cursor = conn.cursor()
+    cursor.execute('select * from time_counter')
+    time_counter = cursor.fetchall()
+    if len(time_counter)==0:
+        return None
+    else:
+        return time_counter[0][0]
+    
+def set_time_counter_message_id(conn, message_id):
+    cursor = conn.cursor()
+    cursor.execute('insert into time_counter values (?)', (message_id,))
+    conn.commit()
+
+def form_time_counter_message(diff_time, message_txt):
+    days = diff_time.days
+    seconds = diff_time.seconds
+    hours = seconds//3600
+    minutes = (seconds//60) % 60
+    message_txt = f"{days} days, {hours} hours, and {minutes} {message_txt}"
+    return message_txt
