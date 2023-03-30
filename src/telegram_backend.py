@@ -282,13 +282,16 @@ class TelegramAdminBot(TelegramBot):
         self.db_log.tweet_log(log_args)
 
     def send_thread_tweet(self, tweet_url, chat_id, user_name):
-        thread_text, tweet_url = self.make_thread_text(tweet_url)
+        thread_text, _ = self.make_thread_text(tweet_url)
+        tweet_url = self.get_thread_first_tweet_id(tweet_url)
         tweet = self.twitter_api.get_tweet(tweet_url)
         tweet['text'] = thread_text
         self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
 
     def send_thread_tweet_telegraph(self, tweet_url, chat_id, user_name):
-        html_content, tweet_url = self.make_thread_text_telegraph(tweet_url)
+        html_content, _ = self.make_thread_text_telegraph(tweet_url)
+        tweet_url = self.get_thread_first_tweet_id(tweet_url)
+        print(tweet_url)
         tweet = self.twitter_api.get_tweet(tweet_url)
         page_title = f'Thread by {tweet["name"]}'
         page_url = self.telegraph.create_page(title=page_title, html_content=html_content)
@@ -321,7 +324,6 @@ class TelegramAdminBot(TelegramBot):
                         html_content += f"\n\n<img src='{media[0]}'/>"
                     elif media[1] == 'video':
                         html_content += f"\n\n<video src='{media[0]}'/>"
-            return html_content, tweet_url
         else:
             html_content = thread_text + f" <p> <a href='{tweet_url}'>(Link to tweet)</a> </p>"
             if tweet_media:
@@ -330,7 +332,14 @@ class TelegramAdminBot(TelegramBot):
                         html_content += f"\n\n<img src='{media[0]}'/>"
                     elif media[1] == 'video' or media[1] == 'animated_gif':
                         html_content += f"\n\n<video src='{media[0]}'/>"
-            return html_content, tweet_url
+        return html_content, tweet_url
+    
+    def get_thread_first_tweet_id(self, tweet_url):
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        while tweet['parent_tweet_id']:
+            tweet_url = f"https://twitter.com/{tweet['name']}/status/{tweet['parent_tweet_id']}"
+            tweet = self.twitter_api.get_tweet(tweet_url)        
+        return tweet_url
         
     def time_counter(self):
         message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done 💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom\n\n@Tweets_SUT"
