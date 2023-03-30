@@ -5,7 +5,7 @@ from twitter_backend import TwitterClient
 from telegram_backend import TelegramAdminBot, TelegramSuggestedTweetsBot
 
 @click.command(help='Zam: A Telegram Bot for posting tweets in a channel')
-@click.option('--time_diff', default='1:30', help="Difference between the time of the tweet and the time of the server running the bot. Format: HOURS:MINUTES")
+@click.option('--time_diff', default='0:30', help="Difference between the time of the tweet and the time of the server running the bot. Format: HOURS:MINUTES")
 @click.option('--mahsa_message', default=True, help="A message about Mahsa Amini's murder will be sent to the channel with a timer which is updated evety few seconds.")
 def main(time_diff, mahsa_message):
     creds = utils.read_credentials(creds_file)
