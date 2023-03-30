@@ -43,7 +43,7 @@ class TelegramBot():
                 tweet_date_persian = tweet['tweet_date_persian']
 
                 if 'telegraph_url' in tweet:
-                    tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>Read Full Thread</a>):\n\n{tg_text}"
+                    tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>read in Telegra.ph</a>):\n\n{tg_text}"
                     tg_text = f'{tg_text} ...'
 
                 tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
@@ -255,8 +255,8 @@ class TelegramAdminBot(TelegramBot):
         chat_id = update.message.chat_id
 
         if tweet['parent_tweet_id']:
-            button_list = [InlineKeyboardButton("Get full thread (Message)", callback_data=f"GetFullThreadMessage|{tweet['name']}|{tweet['tweet_id']}"),
-                           InlineKeyboardButton("Get full thread (Telegra.ph)", callback_data=f"GetFullThreadTelegraph|{tweet['name']}|{tweet['tweet_id']}"),
+            button_list = [InlineKeyboardButton("Get thread (Message)", callback_data=f"GetFullThreadMessage|{tweet['name']}|{tweet['tweet_id']}"),
+                           InlineKeyboardButton("Get thread (Telegra.ph)", callback_data=f"GetFullThreadTelegraph|{tweet['name']}|{tweet['tweet_id']}"),
                            InlineKeyboardButton("Get only this tweet", callback_data=f"GetThisTweet|{tweet['name']}|{tweet['tweet_id']}")] 
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=2))
             success_message = f"It seems that this tweet is a reply to another tweet. Do you want to get the full thread or just this tweet?"

@@ -78,13 +78,20 @@ class telegraph():
         self.create_account()
 
     def create_account(self):
-        short_name = self.account_name
-        author_name = self.account_name
-        self.author_url = 'https://t.me/{}'.format(self.account_name)
-        self.access_token = self.telegraph.create_account(short_name=short_name, author_name=author_name, 
-                                                        author_url=self.author_url, replace_token=True)['access_token']
+        try:
+            short_name = self.account_name
+            author_name = self.account_name
+            self.author_url = 'https://t.me/{}'.format(self.account_name)
+            self.access_token = self.telegraph.create_account(short_name=short_name, author_name=author_name, 
+                                                            author_url=self.author_url, replace_token=True)['access_token']
+        except:
+            print('Error in creating account')
 
     def create_page(self, title, html_content):
-        page = self.telegraph.create_page(title=title, html_content=html_content, author_name=self.account_name, 
-                                        author_url=self.author_url, return_content=True)
-        return page['url']
+        try:
+            page = self.telegraph.create_page(title=title, html_content=html_content, author_name=self.account_name, 
+                                            author_url=self.author_url, return_content=True)
+            return page['url']
+        except:
+            print('Error in creating page')
+            return None
