@@ -8,7 +8,7 @@ def read_credentials(creds_file):
         creds = json.load(f)
     return creds
 
-def covert_tweet_time_to_iran_time(date):
+def covert_tweet_time_to_desired_time(date, time_diff):
     date = dt.datetime.strptime(date, '%Y-%m-%d %H:%M:%S') + dt.timedelta(hours=time_diff['hours'], minutes=time_diff['minutes'])
     date = f"{JalaliDate(date).strftime('%Y/%m/%d')} {date.strftime('%H:%M:%S')}"
     return date
