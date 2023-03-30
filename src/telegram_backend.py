@@ -18,12 +18,13 @@ class TelegramBot():
             else:
                 caption = ""
                 caption_entities = None
+
             if media[1] == "photo":
                 if entities:
                     media_tmp = InputMediaPhoto(media[0], caption=caption, caption_entities=caption_entities)
                 else:
                     media_tmp = InputMediaPhoto(media[0], caption=caption, parse_mode="HTML")
-            elif media[1] == "video":
+            elif media[1] == "video" or media[1] == "animated_gif":
                 if entities:
                     media_tmp = InputMediaVideo(media[0], caption=caption, caption_entities=caption_entities)
                 else:
@@ -35,17 +36,16 @@ class TelegramBot():
             try:
                 tweet_id = tweet['tweet_id']
                 tg_text = tweet['text']
+                tg_text = utils.parse_text(tg_text)
                 tw_screen_name = tweet['displayname']
                 tweet_url = tweet['url']
                 tw_name = tweet['name']
                 tweet_date_persian = tweet['tweet_date_persian']
 
-                # check if tweet has telegraph_url
                 if 'telegraph_url' in tweet:
                     tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>Read Full Thread</a>):\n\n{tg_text}"
                     tg_text = f'{tg_text} ...'
 
-                
                 tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
                 tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
                 tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
@@ -296,7 +296,6 @@ class TelegramAdminBot(TelegramBot):
         tweet['telegraph_url'] = page_url
         self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
 
-
     def make_thread_text(self, tweet_url):
         tweet = self.twitter_api.get_tweet(tweet_url)
         thread_text = tweet['text']
@@ -310,6 +309,7 @@ class TelegramAdminBot(TelegramBot):
     def make_thread_text_telegraph(self, tweet_url):
         tweet = self.twitter_api.get_tweet(tweet_url)
         thread_text = tweet['text']
+        thread_text = utils.parse_text(thread_text)
         tweet_media = tweet['media']
 
         if tweet['parent_tweet_id']:
@@ -328,7 +328,7 @@ class TelegramAdminBot(TelegramBot):
                 for media in tweet_media:
                     if media[1] == 'photo':
                         html_content += f"\n\n<img src='{media[0]}'/>"
-                    elif media[1] == 'video':
+                    elif media[1] == 'video' or media[1] == 'animated_gif':
                         html_content += f"\n\n<video src='{media[0]}'/>"
             return html_content, tweet_url
         
@@ -356,7 +356,6 @@ class TelegramAdminBot(TelegramBot):
                 print(e)
                 pass
             time.sleep(61)
-
 
     def check_for_tweet_in_line(self):
         # check for tweets in line every 30 seconds
