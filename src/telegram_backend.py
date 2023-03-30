@@ -275,7 +275,7 @@ class TelegramAdminBot(TelegramBot):
             return thread_text, tweet_url
         
     def time_counter(self):
-        message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom"
+        message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done 💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom\n\n@Tweets_SUT"
         mahsa_death_time = dt.datetime(2022, 9, 16, 19, 0)
         message_id = utils.get_time_counter_message_id(self.db_log.conn)
         if message_id is None:
