@@ -39,6 +39,12 @@ class TelegramBot():
                 tweet_url = tweet['url']
                 tw_name = tweet['name']
                 tweet_date_persian = tweet['tweet_date_persian']
+
+                # check if tweet has telegraph_url
+                if 'telegraph_url' in tweet:
+                    tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>Read Full Thread</a>):\n\n{tg_text}"
+                    tg_text = f'{tg_text} ...'
+
                 
                 tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
                 tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
@@ -89,7 +95,10 @@ class TelegramBot():
 
         if query_type == 'TIME':
             tweet_id = query_text[2]
-            desired_time = query_text[1]
+            time_now = dt.datetime.now()
+            time_now = time_now.replace(second=0, microsecond=0)
+            desired_time = time_now + dt.timedelta(minutes=int(query_text[1]))
+            desired_time = desired_time.strftime("%Y-%m-%d %H:%M:%S")
             desired_time_persian = utils.covert_tweet_time_to_desired_time(desired_time, self.time_diff)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
 
@@ -111,16 +120,29 @@ class TelegramBot():
             admin_user_name = tweet[2]
             query.answer(text=f"Sent by {admin_user_name} at {sent_time} Iran time-zone")
 
-        if query_type == 'GetFullThread':
+        if query_type == 'GetFullThreadMessage':
             tweet_id = query_text[2]
             tweet_user_name = query_text[1]
             tweet_url = f"https://twitter.com/{tweet_user_name}/status/{tweet_id}"
-            self.send_thread_tweet(tweet_url, chat_id=chat_id, user_name=user_name)
+            self.send_thread_tweet(tweet_url, chat_id=chat_id, user_name=user_name) 
 
             args = {'chat_id': chat_id, 'state': None}
             utils.set_state(self.db_log.conn, args)
 
-            button_list = [InlineKeyboardButton("Full thread selected", callback_data="None")]
+            button_list = [InlineKeyboardButton("Full thread selected (Message)", callback_data="None")]
+            reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
+            query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
+
+        if query_type == 'GetFullThreadTelegraph':
+            tweet_id = query_text[2]
+            tweet_user_name = query_text[1]
+            tweet_url = f"https://twitter.com/{tweet_user_name}/status/{tweet_id}"
+            self.send_thread_tweet_telegraph(tweet_url, chat_id=chat_id, user_name=user_name) 
+
+            args = {'chat_id': chat_id, 'state': None}
+            utils.set_state(self.db_log.conn, args)
+            
+            button_list = [InlineKeyboardButton("Full thread selected (Telegraph)", callback_data="None")]
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
             query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
 
@@ -139,12 +161,9 @@ class TelegramBot():
             query.edit_message_text(text=query.message.text, reply_markup=reply_markup)
 
     def make_time_options(self, tweet_id):
-        time_now = dt.datetime.now()
-        time_now = time_now.replace(second=0, microsecond=0)
         button_list = []
-        for i in range(0, 16*30, 30):
-            time_option = time_now + dt.timedelta(minutes=i)
-            inline_key = InlineKeyboardButton(f"{i} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
+        for time_option in range(0, 16*30, 30):
+            inline_key = InlineKeyboardButton(f"{time_option} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
             button_list.append(inline_key)
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
         markup_text = "Please select a time for sending this tweet."
@@ -199,6 +218,7 @@ class TelegramAdminBot(TelegramBot):
         self.bot = Bot(token=self.TOKEN)
         self.suggestions_bot = suggestions_bot
         self.mahsa_message = mahsa_message
+        self.telegraph = utils.telegraph(account_name=self.CHANNEL_NAME.split('@')[1])
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
@@ -235,7 +255,8 @@ class TelegramAdminBot(TelegramBot):
         chat_id = update.message.chat_id
 
         if tweet['parent_tweet_id']:
-            button_list = [InlineKeyboardButton("Get full thread", callback_data=f"GetFullThread|{tweet['name']}|{tweet['tweet_id']}"),
+            button_list = [InlineKeyboardButton("Get full thread (Message)", callback_data=f"GetFullThreadMessage|{tweet['name']}|{tweet['tweet_id']}"),
+                           InlineKeyboardButton("Get full thread (Telegra.ph)", callback_data=f"GetFullThreadTelegraph|{tweet['name']}|{tweet['tweet_id']}"),
                            InlineKeyboardButton("Get only this tweet", callback_data=f"GetThisTweet|{tweet['name']}|{tweet['tweet_id']}")] 
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=2))
             success_message = f"It seems that this tweet is a reply to another tweet. Do you want to get the full thread or just this tweet?"
@@ -266,6 +287,16 @@ class TelegramAdminBot(TelegramBot):
         tweet['text'] = thread_text
         self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
 
+    def send_thread_tweet_telegraph(self, tweet_url, chat_id, user_name):
+        html_content, tweet_url = self.make_thread_text_telegraph(tweet_url)
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        page_title = f'Thread by {tweet["name"]}'
+        page_url = self.telegraph.create_page(title=page_title, html_content=html_content)
+        tweet['text'] = tweet['text']
+        tweet['telegraph_url'] = page_url
+        self.send_tweet(self, tweet=tweet, chat_id=chat_id, user_name=user_name)
+
+
     def make_thread_text(self, tweet_url):
         tweet = self.twitter_api.get_tweet(tweet_url)
         thread_text = tweet['text']
@@ -275,6 +306,31 @@ class TelegramAdminBot(TelegramBot):
             return f"{self.make_thread_text(tweet_url)[0]} \n\n {thread_text}", tweet_url
         else:
             return thread_text, tweet_url
+
+    def make_thread_text_telegraph(self, tweet_url):
+        tweet = self.twitter_api.get_tweet(tweet_url)
+        thread_text = tweet['text']
+        tweet_media = tweet['media']
+
+        if tweet['parent_tweet_id']:
+            tweet_url = f"https://twitter.com/{tweet['name']}/status/{tweet['parent_tweet_id']}"
+            html_content = f"<p>{self.make_thread_text_telegraph(tweet_url)[0]}</p>" + f"<p>{thread_text}</p>"
+            if tweet_media:
+                for media in tweet_media:
+                    if media[1] == 'photo':
+                        html_content += f"\n\n<img src='{media[0]}'/>"
+                    elif media[1] == 'video':
+                        html_content += f"\n\n<video src='{media[0]}'/>"
+            return html_content, tweet_url
+        else:
+            html_content = thread_text + f" <p> <a href='{tweet_url}'>(Link to tweet)</a> </p>"
+            if tweet_media:
+                for media in tweet_media:
+                    if media[1] == 'photo':
+                        html_content += f"\n\n<img src='{media[0]}'/>"
+                    elif media[1] == 'video':
+                        html_content += f"\n\n<video src='{media[0]}'/>"
+            return html_content, tweet_url
         
     def time_counter(self):
         message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done 💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom\n\n@Tweets_SUT"
