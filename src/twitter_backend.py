@@ -52,12 +52,7 @@ class TwitterClient(object):
         tweet_body = tweet.data.text
         displayname = tweet.includes['users'][0]['name']
         username = tweet.includes['users'][0]['username']
-        try:
-            media_link = re.search("(?P<url>https?://[^\s]+)", tweet_body).group("url")
-            tweet_body = tweet_body.replace(media_link, "")
-        except:
-            media_link = ""
-            pass
+        tweet_body = utils.parse_text(tweet_body)
 
         tweet = {'text': tweet_body, 'media': media_url, 'displayname': displayname, 'tweet_id': id, 'name': username, 'url': tweet_url, 'tweet_date_persian':tweet_date_persian, 'parent_tweet_id': parent_tweet_id}
         return tweet
