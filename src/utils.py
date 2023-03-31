@@ -71,6 +71,27 @@ def parse_text(text):
     text = re.sub(r'@(\w+)', r'<a href="https://twitter.com/\1">\1</a>', text)
     return text
 
+def get_next_sending_time(tweets_line, desired_num_tweets_per_hour=6):
+    tweets_sent_time = [dt.datetime.strptime(tweet[3], '%Y-%m-%d %H:%M:%S') for tweet in tweets_line if tweet[3] is not None]
+    time_now = dt.datetime.now()
+    current_hour = int(time_now.strftime('%H'))
+    current_minute = int(time_now.strftime('%M'))
+    for hour in range(current_hour, 24):
+        tweets_in_this_hour = [tweet for tweet in tweets_sent_time if tweet.hour==hour]
+        if len(tweets_in_this_hour)<desired_num_tweets_per_hour:
+            random_minute = random.randint(current_minute, 59)
+            random_hour = random.randint(current_hour, current_hour+2)
+            desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
+            break
+    else:
+        random_hour = random.randint(current_hour, 23)
+        random_minute = random.randint(current_minute, 59)
+        desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
+    
+    return desired_time
+    
+
+
 class telegraph():
     def __init__(self, account_name):
         self.account_name = account_name

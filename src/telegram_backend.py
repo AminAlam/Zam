@@ -96,7 +96,10 @@ class TelegramBot():
             tweet_id = query_text[2]
             time_now = dt.datetime.now()
             time_now = time_now.replace(second=0, microsecond=0)
-            desired_time = time_now + dt.timedelta(minutes=int(query_text[1]))
+            if query_text[1] == 'AUTO':
+                desired_time = utils.get_next_sending_time(tweets_line = self.db_log.get_tweets_line())
+            else:
+                desired_time = time_now + dt.timedelta(minutes=int(query_text[1]))
             desired_time = desired_time.strftime("%Y-%m-%d %H:%M:%S")
             desired_time_persian = utils.covert_tweet_time_to_desired_time(desired_time, self.time_diff)
             self.db_log.set_sending_time_for_tweet_in_line(tweet_id, sending_time=desired_time, tweet_text=tg_text, entities=entities, query=query_dict)
@@ -164,6 +167,9 @@ class TelegramBot():
         for time_option in range(0, 16*30, 30):
             inline_key = InlineKeyboardButton(f"{time_option} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
             button_list.append(inline_key)
+        # automatic option will sent twe tweet based on the number of tweets in the line
+        inline_key = InlineKeyboardButton(f"Auto timing", callback_data=f"TIME|AUTO|{tweet_id}")
+        button_list.append(inline_key)
         reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=3))
         markup_text = "Please select a time for sending this tweet."
         return reply_markup, markup_text
@@ -365,7 +371,7 @@ class TelegramAdminBot(TelegramBot):
             time.sleep(61)
 
     def check_for_tweet_in_line(self):
-        # check for tweets in line every 30 seconds
+        # check for tweets in line every 10 seconds
         while True:
             tweets_line = self.db_log.get_tweets_line()
 
