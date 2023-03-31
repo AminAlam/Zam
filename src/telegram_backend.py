@@ -242,7 +242,7 @@ class TelegramBot():
         return menu
 
 class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate) -> None:
+    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate, num_tweets_to_preserve) -> None:
         super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate)
         self.CHAT_ID = creds["ADMIN_CHAT_ID"]
         self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
@@ -251,6 +251,7 @@ class TelegramAdminBot(TelegramBot):
         self.bot = Bot(token=self.TOKEN)
         self.suggestions_bot = suggestions_bot
         self.mahsa_message = mahsa_message
+        self.num_tweets_to_preserve = num_tweets_to_preserve
         self.telegraph = utils.telegraph(account_name=self.CHANNEL_NAME.split('@')[1])
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
@@ -455,6 +456,7 @@ class TelegramAdminBot(TelegramBot):
                                     self.bot.sendMessage(chat_id=self.MAIN_CHANNEL_CHAT_ID, text=tg_text,disable_web_page_preview=True,timeout=1000, entities=entities)
 
                                 self.db_log.remove_tweet_from_line(tweet_id)
+                                self.db_log.remove_old_tweets_in_line(num_tweets_to_preserve=self.num_tweets_to_preserve)
                                 utils.deleted_snapshots(media_list)
                                 button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
                                 reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
