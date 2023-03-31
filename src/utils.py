@@ -89,6 +89,13 @@ def get_next_sending_time(tweets_line, desired_num_tweets_per_hour=6):
         desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
     
     return desired_time
+
+def deleted_snapshots(media_list):
+    for media in media_list:
+        if media[1]=='photo':
+            if not media[0].startswith("http"):
+                os.remove(media[0])
+
     
 
 

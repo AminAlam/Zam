@@ -11,6 +11,8 @@ from pathlib import Path
 import sqlite3
 import datetime as dt
 import requests
+from tweetcapture import TweetCapture
+import asyncio
 from telegram import Bot, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, MessageEntity
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 

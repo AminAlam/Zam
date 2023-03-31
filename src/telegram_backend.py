@@ -1,10 +1,15 @@
 from configs import * 
+
 class TelegramBot():
-    def __init__(self, creds, db_log, twitter_api, time_diff) -> None:
+    def __init__(self, creds, db_log, twitter_api, time_diff, gpt_suggestions_rate) -> None:
         self.creds = creds
         self.db_log = db_log
         self.twitter_api = twitter_api
         self.time_diff = time_diff
+        self.gpt_suggestions_rate = gpt_suggestions_rate
+        if self.gpt_suggestions_rate > 0:
+            import gpt_model
+            self.gpt_model = gpt_model.fa_GPT()
 
     def start(self, update, context=None):
         update.message.reply_text('Hello {}'.format(update.message.from_user.first_name))
@@ -20,10 +25,14 @@ class TelegramBot():
                 caption_entities = None
 
             if media[1] == "photo":
-                if entities:
-                    media_tmp = InputMediaPhoto(media[0], caption=caption, caption_entities=caption_entities)
+                if not media[0].startswith("http"):
+                    media_url = open(media[0], 'rb')
                 else:
-                    media_tmp = InputMediaPhoto(media[0], caption=caption, parse_mode="HTML")
+                    media_url = media[0]
+                if entities:
+                    media_tmp = InputMediaPhoto(media_url, caption=caption, caption_entities=caption_entities)                    
+                else:
+                    media_tmp = InputMediaPhoto(media_url, caption=caption, parse_mode="HTML")
             elif media[1] == "video" or media[1] == "animated_gif":
                 if entities:
                     media_tmp = InputMediaVideo(media[0], caption=caption, caption_entities=caption_entities)
@@ -45,11 +54,30 @@ class TelegramBot():
                     tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>read in Telegra.ph</a>):\n\n{tg_text}"
                     tg_text = f'{tg_text} ...'
 
+                if random.random() < self.gpt_suggestions_rate and len(tg_text) < 100:
+                    gpt_suggestion = self.gpt_model.generate(tg_text)
+                    tg_text = f"👤 Real tweet: {tg_text}\n\n🤖 GPT Story: {gpt_suggestion}"
+
                 tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
                 tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
                 tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
                 tweet_line_args ={'tweet_id': tweet_id, 'tweet_text': tg_text, 'media_list': ''}
-                
+
+                # if tweet is a qoute retweet and has no media, take snapshot of the quoted tweet and save it as media
+                if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
+                    if tweet['quoted_tweet_id'] != None:
+                        reference_tweet_id = tweet['quoted_tweet_id']
+                    elif tweet['parent_tweet_id'] != '':
+                        reference_tweet_id = tweet['parent_tweet_id']
+                    reference_tweet_url = f'https://twitter.com/{tw_name}/status/{reference_tweet_id}'
+                    reference_tweet_snapshot_as_media = self.twitter_api.get_reference_tweet_snapshot_as_media(reference_tweet_url, reference_tweet_id)
+                    tweet['media'].append(reference_tweet_snapshot_as_media)
+
+                    if len(tweet['media']) == 1:
+                        tg_text = f"🔗 Photo is a snapshot of <a href='{reference_tweet_url}'>this tweet</a> \n\n{tg_text}"
+                    elif len(tweet['media']) > 1:
+                        tg_text = f"🔗 One of the media is a snapshot of <a href='{reference_tweet_url}'>this tweet</a> \n\n{tg_text}"
+
                 if not self.db_log.check_tweet_existence(tweet_id):
                     if len(tweet['media']) > 0:
                         media_array = self.make_media_array(tg_text, tweet['media'])
@@ -214,8 +242,8 @@ class TelegramBot():
         return menu
 
 class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message) -> None:
-        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff)
+    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate) -> None:
+        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate)
         self.CHAT_ID = creds["ADMIN_CHAT_ID"]
         self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
@@ -259,6 +287,11 @@ class TelegramAdminBot(TelegramBot):
         tweet = self.twitter_api.get_tweet(tweet_url)
         chat_id = update.message.chat_id
 
+        tweet_id = tweet['tweet_id']
+        if self.db_log.check_tweet_existence(tweet_id):
+            update.message.reply_text('This tweet has already been sent to the bot')
+            return
+
         if tweet['parent_tweet_id']:
             button_list = [InlineKeyboardButton("Get thread (Message)", callback_data=f"GetFullThreadMessage|{tweet['name']}|{tweet['tweet_id']}"),
                            InlineKeyboardButton("Get thread (Telegra.ph)", callback_data=f"GetFullThreadTelegraph|{tweet['name']}|{tweet['tweet_id']}"),
@@ -276,11 +309,19 @@ class TelegramAdminBot(TelegramBot):
             admin_bool, user_name = self.check_admin(update)
         else:
             admin_bool, _ = self.check_admin(update)
+
+        # tell to wait for the tweet to be processed
+        if chat_id:
+            self.bot.send_message(chat_id=chat_id, text='Please wait for the tweet to be processed...')
+        else:
+            update.message.reply_text('Please wait for the tweet to be processed...')
+
         status = self.on_data(tweet)
         if chat_id:
             self.bot.send_message(chat_id=chat_id, text=status[1])
         else:
             update.message.reply_text(status[1])
+
         log_args = status[-1]
         log_args['user_name'] = user_name
         log_args['admin'] = admin_bool
@@ -374,7 +415,6 @@ class TelegramAdminBot(TelegramBot):
         # check for tweets in line every 10 seconds
         while True:
             tweets_line = self.db_log.get_tweets_line()
-
             if tweets_line:
 
                 for tweet in tweets_line:
@@ -415,7 +455,7 @@ class TelegramAdminBot(TelegramBot):
                                     self.bot.sendMessage(chat_id=self.MAIN_CHANNEL_CHAT_ID, text=tg_text,disable_web_page_preview=True,timeout=1000, entities=entities)
 
                                 self.db_log.remove_tweet_from_line(tweet_id)
-
+                                utils.deleted_snapshots(media_list)
                                 button_list = [InlineKeyboardButton("Sent ✅", callback_data=f"SENT|{desired_time_persian}|{tweet_id}")]
                                 reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
                                 success_message = f"Sent successfully."
@@ -429,8 +469,8 @@ class TelegramAdminBot(TelegramBot):
             time.sleep(1*10)
 
 class TelegramSuggestedTweetsBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, time_diff) -> None:
-        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff)
+    def __init__(self, creds, twitter_api, db_log, time_diff, gpt_suggestions_rate) -> None:
+        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate)
         self.CHAT_ID = creds["SUGGESTIONS_CHAT_ID"]
         self.TOKEN = creds["SUGGESTIONS_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
@@ -448,7 +488,12 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         tweet_url = update.message.text
         if "twitter.com" in tweet_url:
             tweet = self.twitter_api.get_tweet(tweet_url)
+            tweet_id = tweet['tweet_id']
+            if self.db_log.check_tweet_existence(tweet_id):
+                update.message.reply_text('This tweet has already been sent to the bot')
+                return
             self.bot.sendMessage(chat_id=self.CHAT_ID, text=f'@{user_name}',timeout=1000)
+            update.message.reply_text('Please wait for the tweet to be processed...')
             status = self.on_data(tweet)
             update.message.reply_text(status[1])
             log_args = status[-1]
