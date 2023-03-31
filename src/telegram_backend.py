@@ -58,10 +58,7 @@ class TelegramBot():
                     gpt_suggestion = self.gpt_model.generate(tg_text)
                     tg_text = f"👤 Real tweet: {tg_text}\n\n🤖 GPT Story: {gpt_suggestion}"
 
-                tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
-                tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
-                tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
-                tweet_line_args ={'tweet_id': tweet_id, 'tweet_text': tg_text, 'media_list': ''}
+                
 
                 # if tweet is a qoute retweet and has no media, take snapshot of the quoted tweet and save it as media
                 if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
@@ -74,9 +71,14 @@ class TelegramBot():
                     tweet['media'].append(reference_tweet_snapshot_as_media)
 
                     if len(tweet['media']) == 1:
-                        tg_text = f"🔗 Photo is a snapshot of <a href='{reference_tweet_url}'>this tweet</a> \n\n{tg_text}"
+                        tg_text = f"{tg_text}\n\n🔗 Photo is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
                     elif len(tweet['media']) > 1:
-                        tg_text = f"🔗 One of the media is a snapshot of <a href='{reference_tweet_url}'>this tweet</a> \n\n{tg_text}"
+                        tg_text = f"{tg_text}\n\n🔗 One of the media is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
+
+                tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
+                tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
+                tg_text = f"{tg_text} \n\n {self.CHANNEL_NAME}"
+                tweet_line_args ={'tweet_id': tweet_id, 'tweet_text': tg_text, 'media_list': ''}
 
                 if not self.db_log.check_tweet_existence(tweet_id):
                     if len(tweet['media']) > 0:
