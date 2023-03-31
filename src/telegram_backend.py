@@ -36,7 +36,6 @@ class TelegramBot():
             try:
                 tweet_id = tweet['tweet_id']
                 tg_text = tweet['text']
-                tg_text = utils.parse_text(tg_text)
                 tw_screen_name = tweet['displayname']
                 tweet_url = tweet['url']
                 tw_name = tweet['name']
@@ -312,7 +311,6 @@ class TelegramAdminBot(TelegramBot):
     def make_thread_text_telegraph(self, tweet_url):
         tweet = self.twitter_api.get_tweet(tweet_url)
         thread_text = tweet['text']
-        thread_text = utils.parse_text(thread_text)
         tweet_media = tweet['media']
 
         if tweet['parent_tweet_id']:

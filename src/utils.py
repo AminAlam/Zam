@@ -66,6 +66,7 @@ def form_time_counter_message(diff_time, message_txt):
     return message_txt
 
 def parse_text(text):
+    text = re.sub(r' https://t.co/\w{10}', '', text)
     text = re.sub(r'(https?://\S+)', r'<a href="\1">Link</a>', text)
     text = re.sub(r'@(\w+)', r'<a href="https://twitter.com/\1">\1</a>', text)
     return text
