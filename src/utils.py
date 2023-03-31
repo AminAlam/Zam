@@ -1,6 +1,6 @@
 import json 
 from configs import *
-
+from telegraph import Telegraph
 from persiantools.jdatetime import JalaliDate
 
 def read_credentials(creds_file):
@@ -9,7 +9,7 @@ def read_credentials(creds_file):
     return creds
 
 def covert_tweet_time_to_desired_time(date, time_diff):
-    date = dt.datetime.strptime(date, '%Y-%m-%d %H:%M:%S') + dt.timedelta(hours=time_diff['hours'], minutes=time_diff['minutes'])
+    date = dt.datetime.strptime(date, '%Y-%m-%d %H:%M:%S') + dt.timedelta(hours=int(time_diff['hours']), minutes=int(time_diff['minutes']))
     date = f"{JalaliDate(date).strftime('%Y/%m/%d')} {date.strftime('%H:%M:%S')}"
     return date
 
@@ -64,3 +64,56 @@ def form_time_counter_message(diff_time, message_txt):
     minutes = (seconds//60) % 60
     message_txt = f"{days} days, {hours} hours, and {minutes} {message_txt}"
     return message_txt
+
+def parse_text(text):
+    text = re.sub(r' https://t.co/\w{10}', '', text)
+    text = re.sub(r'(https?://\S+)', r'<a href="\1">Link</a>', text)
+    text = re.sub(r'@(\w+)', r'<a href="https://twitter.com/\1">\1</a>', text)
+    return text
+
+def get_next_sending_time(tweets_line, desired_num_tweets_per_hour=6):
+    tweets_sent_time = [dt.datetime.strptime(tweet[3], '%Y-%m-%d %H:%M:%S') for tweet in tweets_line if tweet[3] is not None]
+    time_now = dt.datetime.now()
+    current_hour = int(time_now.strftime('%H'))
+    current_minute = int(time_now.strftime('%M'))
+    for hour in range(current_hour, 24):
+        tweets_in_this_hour = [tweet for tweet in tweets_sent_time if tweet.hour==hour]
+        if len(tweets_in_this_hour)<desired_num_tweets_per_hour:
+            random_minute = random.randint(current_minute, 59)
+            random_hour = random.randint(current_hour, current_hour+2)
+            desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
+            break
+    else:
+        random_hour = random.randint(current_hour, 23)
+        random_minute = random.randint(current_minute, 59)
+        desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
+    
+    return desired_time
+    
+
+
+class telegraph():
+    def __init__(self, account_name):
+        self.account_name = account_name
+        self.telegraph = Telegraph()
+        self.api_url = 'https://api.telegra.ph'
+        self.create_account()
+
+    def create_account(self):
+        try:
+            short_name = self.account_name
+            author_name = self.account_name
+            self.author_url = 'https://t.me/{}'.format(self.account_name)
+            self.access_token = self.telegraph.create_account(short_name=short_name, author_name=author_name, 
+                                                            author_url=self.author_url, replace_token=True)['access_token']
+        except:
+            print('Error in creating account')
+
+    def create_page(self, title, html_content):
+        try:
+            page = self.telegraph.create_page(title=title, html_content=html_content, author_name=self.account_name, 
+                                            author_url=self.author_url, return_content=True)
+            return page['url']
+        except:
+            print('Error in creating page')
+            return None

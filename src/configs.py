@@ -5,12 +5,13 @@ import os
 import threading
 import time
 import click
+import random
 import pytz
 from pathlib import Path
 import sqlite3
 import datetime as dt
-
-from telegram import Bot, InputMediaPhoto, InputMediaVideo, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, MessageEntity
+import requests
+from telegram import Bot, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, MessageEntity
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
 from persiantools.jdatetime import JalaliDate

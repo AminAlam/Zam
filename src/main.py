@@ -18,3 +18,6 @@ def main(time_diff, mahsa_message):
     suggestions_bot = TelegramSuggestedTweetsBot(creds, twitter_api, db_log, time_diff)
     admin_bot = TelegramAdminBot(creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message)    
 
+
+if __name__ == '__main__':
+    main()
