@@ -51,14 +51,12 @@ class TelegramBot():
                 tweet_date_persian = tweet['tweet_date_persian']
 
                 if 'telegraph_url' in tweet:
-                    tg_text = f"📝 This is a thread (<a href='{tweet['telegraph_url']}'>read in Telegra.ph</a>):\n\n{tg_text}"
+                    tg_text = f"{tg_text}\n\n📝 Read the full thread in <a href='{tweet['telegraph_url']}'>Telegra.ph</a>"
                     tg_text = f'{tg_text} ...'
 
                 if random.random() < self.gpt_suggestions_rate and len(tg_text) < 100:
                     gpt_suggestion = self.gpt_model.generate(tg_text)
                     tg_text = f"👤 Real tweet: {tg_text}\n\n🤖 GPT Story: {gpt_suggestion}"
-
-                
 
                 # if tweet is a qoute retweet and has no media, take snapshot of the quoted tweet and save it as media
                 if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
@@ -258,7 +256,7 @@ class TelegramAdminBot(TelegramBot):
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
-        dp.add_handler(MessageHandler(Filters.text, self.text_handler))
+        dp.add_handler(MessageHandler(Filters.text, self.text_handler_thread))
         dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
         updater.start_polling()
 
@@ -267,6 +265,11 @@ class TelegramAdminBot(TelegramBot):
 
         self.time_counter_thread = threading.Thread(target=self.time_counter)
         self.time_counter_thread.start()
+
+    def text_handler_thread(self, update, context=None):
+        text_handler_thread = threading.Thread(target=self.text_handler, args=(update, context,))
+        text_handler_thread.start()
+
 
     def text_handler(self, update, context=None):
         try:
@@ -289,7 +292,6 @@ class TelegramAdminBot(TelegramBot):
         tweet_url = update.message.text
         tweet = self.twitter_api.get_tweet(tweet_url)
         chat_id = update.message.chat_id
-
         tweet_id = tweet['tweet_id']
         if self.db_log.check_tweet_existence(tweet_id):
             update.message.reply_text('This tweet has already been sent to the bot')
@@ -483,9 +485,13 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
-        dp.add_handler(MessageHandler(Filters.text, self.receive_tweet))
+        dp.add_handler(MessageHandler(Filters.text, self.text_handler_thread))
         dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
         updater.start_polling()
+
+    def text_handler_thread(self, update, context=None):
+        text_handler_thread = threading.Thread(target=self.receive_tweet, args=(update, context,))
+        text_handler_thread.start()
 
     def receive_tweet(self, update, context=None):
         _, user_name = self.check_admin(update)
