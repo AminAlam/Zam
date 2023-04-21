@@ -42,7 +42,7 @@ class TelegramBot():
         return media_array
 
     def on_data(self,tweet):
-            try:
+            # try:
                 tweet_id = tweet['tweet_id']
                 tg_text = tweet['text']
                 tw_screen_name = tweet['displayname']
@@ -97,10 +97,10 @@ class TelegramBot():
                     log_args = {'tweet_id': tweet_id, 'tweet_text': '', 'user_name': '', 'status': 'Already Posted'}
                     return False, 'Already Posted', log_args
 
-            except Exception as e:
-                self.db_log.error_log(e)
-                log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Failed'}
-                return False, 'Error: {}'.format(e), log_args
+            # except Exception as e:
+            #     self.db_log.error_log(e)
+            #     log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Failed'}
+            #     return False, 'Error: {}'.format(e), log_args
 
     def callback_query_handler(self, update, context=None):
         user_name = self.get_user_name(update)

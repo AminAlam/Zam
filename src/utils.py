@@ -81,6 +81,10 @@ def get_next_sending_time(tweets_line, desired_num_tweets_per_hour=6):
         if len(tweets_in_this_hour)<desired_num_tweets_per_hour:
             random_minute = random.randint(current_minute, 59)
             random_hour = random.randint(current_hour, current_hour+2)
+            if random_hour < 0 :
+                random_hour = 0
+            elif random_hour >=24 :
+                random_hour = 23 
             desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
             break
     else:
