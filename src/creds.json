@@ -1,0 +1,17 @@
+{
+    "API_KEY":"Twitter_Bot_API_KEY_of",
+    "API_KEY_SECRET":"Twitter_API_key_secret",
+    "BEARER_TOKEN":"Twitter_Bearer_token",
+    "ACCESS_TOKEN":"Twitter_Access_token",
+    "ACCESS_TOKEN_SECRET":"Twitter_Token_secret",
+
+    "ADMIN_TELEGRAM_BOT":"TOKEN_of_admin_bot_in_telegram",
+    "SUGGESTIONS_TELEGRAM_BOT":"TOKEN_of_suggestions_bot_in_telegram",
+    
+    "MAIN_CHANNEL_CHAT_ID":"CHAT_ID_of_the_main_channel_in_telegram",
+    "ADMIN_CHAT_ID":"CHAT_ID_of_admin_channel_in_telegram",
+    "SUGGESTIONS_CHAT_ID":"CHAT_ID_of_suggestions_channel_in_telegram",
+
+    "CHANNEL_NAME":"@Name_of_channel",
+    "ADMIN_ID":["user_name_of_admin_users_in_telegram_without_@", "admin_1", "admin_2"]
+}
