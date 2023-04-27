@@ -48,8 +48,8 @@ Zam: A Telegram/Twitter Bot for posting tweets to Telegram channels
 
 In order to use the program, you need a Twitter bot API, two Telegram bot APIs, and three telegram channels. First, edit the following parameters in src/creds.json file:
 
-- API_KEY: API key of the Twitter bot. Use [this instruction](https://developer.twitter.com/en/docs/twitter-api/getting-started/getting-access-to-the-twitter-api) to get one
 #### Twitter Bot
+- API_KEY: API key of the Twitter bot. Use [this instruction](https://developer.twitter.com/en/docs/twitter-api/getting-started/getting-access-to-the-twitter-api) to get one
 - API_KEY_SECRET: Secret key of API of the Twitter bot 
 - BEARER_TOKEN: Beareer token of the Twitter bot
 - ACCESS_TOKEN: Access token of the Twitter bot
