@@ -1,12 +1,13 @@
 from configs import * 
 
 class TelegramBot():
-    def __init__(self, creds, db_log, twitter_api, time_diff, gpt_suggestions_rate) -> None:
+    def __init__(self, creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot) -> None:
         self.creds = creds
         self.db_log = db_log
         self.twitter_api = twitter_api
         self.time_diff = time_diff
         self.gpt_suggestions_rate = gpt_suggestions_rate
+        self.reference_snapshot = reference_snapshot
         if self.gpt_suggestions_rate > 0:
             import gpt_model
             self.gpt_model = gpt_model.fa_GPT()
@@ -42,7 +43,7 @@ class TelegramBot():
         return media_array
 
     def on_data(self,tweet):
-            # try:
+            try:
                 tweet_id = tweet['tweet_id']
                 tg_text = tweet['text']
                 tw_screen_name = tweet['displayname']
@@ -58,20 +59,20 @@ class TelegramBot():
                     gpt_suggestion = self.gpt_model.generate(tg_text)
                     tg_text = f"👤 Real tweet: {tg_text}\n\n🤖 GPT Story: {gpt_suggestion}"
 
-                # if tweet is a qoute retweet and has no media, take snapshot of the quoted tweet and save it as media
-                if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
-                    if tweet['quoted_tweet_id'] != None:
-                        reference_tweet_id = tweet['quoted_tweet_id']
-                    elif tweet['parent_tweet_id'] != '':
-                        reference_tweet_id = tweet['parent_tweet_id']
-                    reference_tweet_url = f'https://twitter.com/{tw_name}/status/{reference_tweet_id}'
-                    reference_tweet_snapshot_as_media = self.twitter_api.get_reference_tweet_snapshot_as_media(reference_tweet_url, reference_tweet_id)
-                    tweet['media'].append(reference_tweet_snapshot_as_media)
+                if self.reference_snapshot:
+                    if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
+                        if tweet['quoted_tweet_id'] != None:
+                            reference_tweet_id = tweet['quoted_tweet_id']
+                        elif tweet['parent_tweet_id'] != '':
+                            reference_tweet_id = tweet['parent_tweet_id']
+                        reference_tweet_url = f'https://twitter.com/{tw_name}/status/{reference_tweet_id}'
+                        reference_tweet_snapshot_as_media = self.twitter_api.get_reference_tweet_snapshot_as_media(reference_tweet_url, reference_tweet_id)
+                        tweet['media'].append(reference_tweet_snapshot_as_media)
 
-                    if len(tweet['media']) == 1:
-                        tg_text = f"{tg_text}\n\n🔗 Photo is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
-                    elif len(tweet['media']) > 1:
-                        tg_text = f"{tg_text}\n\n🔗 One of the media is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
+                        if len(tweet['media']) == 1:
+                            tg_text = f"{tg_text}\n\n🔗 Photo is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
+                        elif len(tweet['media']) > 1:
+                            tg_text = f"{tg_text}\n\n🔗 One of the media is a snapshot of <a href='{reference_tweet_url}'>this tweet</a>"
 
                 tg_text = f"{tg_text} \n\n🌐 <a href='{tweet_url}'>{tw_screen_name}</a>"
                 tg_text = f"{tg_text} \n📅 {tweet_date_persian}"
@@ -97,10 +98,10 @@ class TelegramBot():
                     log_args = {'tweet_id': tweet_id, 'tweet_text': '', 'user_name': '', 'status': 'Already Posted'}
                     return False, 'Already Posted', log_args
 
-            # except Exception as e:
-            #     self.db_log.error_log(e)
-            #     log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Failed'}
-            #     return False, 'Error: {}'.format(e), log_args
+            except Exception as e:
+                self.db_log.error_log(e)
+                log_args = {'tweet_id': tweet_id, 'tweet_text': tg_text, 'user_name': '', 'status': 'Failed'}
+                return False, 'Error: {}'.format(e), log_args
 
     def callback_query_handler(self, update, context=None):
         user_name = self.get_user_name(update)
@@ -242,8 +243,8 @@ class TelegramBot():
         return menu
 
 class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate, num_tweets_to_preserve) -> None:
-        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate)
+    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate, num_tweets_to_preserve, reference_snapshot) -> None:
+        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot)
         self.CHAT_ID = creds["ADMIN_CHAT_ID"]
         self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
@@ -315,7 +316,6 @@ class TelegramAdminBot(TelegramBot):
         else:
             admin_bool, _ = self.check_admin(update)
 
-        # tell to wait for the tweet to be processed
         if chat_id:
             self.bot.send_message(chat_id=chat_id, text='Please wait for the tweet to be processed...')
         else:
@@ -475,8 +475,8 @@ class TelegramAdminBot(TelegramBot):
             time.sleep(1*10)
 
 class TelegramSuggestedTweetsBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, time_diff, gpt_suggestions_rate) -> None:
-        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate)
+    def __init__(self, creds, twitter_api, db_log, time_diff, gpt_suggestions_rate, reference_snapshot) -> None:
+        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot)
         self.CHAT_ID = creds["SUGGESTIONS_CHAT_ID"]
         self.TOKEN = creds["SUGGESTIONS_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
