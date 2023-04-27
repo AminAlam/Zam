@@ -45,6 +45,28 @@ Zam: A Telegram/Twitter Bot for posting tweets to Telegram channels
 - Run `pip3 install -r requirements.txt` or `pip install -r requirements.txt`
 
 ## Usage
+
+In order to use the program, you need a Twitter bot API, two Telegram bot APIs, and three telegram channels. First, edit the following parameters in src/creds.json file:
+
+- API_KEY: API key of the Twitter bot. Use [this instruction](https://developer.twitter.com/en/docs/twitter-api/getting-started/getting-access-to-the-twitter-api) to get one
+#### Twitter Bot
+- API_KEY_SECRET: Secret key of API of the Twitter bot 
+- BEARER_TOKEN: Beareer token of the Twitter bot
+- ACCESS_TOKEN: Access token of the Twitter bot
+- ACCESS_TOKEN_SECRET: Access token secret of the Twitter API
+#### Telegram Bots
+- ADMIN_TELEGRAM_BOT: Token of the admin bot in telegram. This bot will only respond to the telgram users which you specify
+- SUGGESTIONS_TELEGRAM_BOT: Token of the suggestion bot in telegram. This bot will respond to any user who send a tweet link
+#### Telegam Channels
+- MAIN_CHANNEL_CHAT_ID: Chat ID of your main channel
+- ADMIN_CHAT_ID: Chat ID of the admin channel
+- SUGGESTIONS_CHAT_ID: Chat ID of the suggestion channel
+#### Telegram Channels:
+- CHANNEL_NAME: Name of main channel in telegram (e.g @zam)
+- ADMIN_ID: A list containing telegram usernames of the admins (e.g ['admin1', 'admin2', 'admin3'])
+
+
+
 To run the program, use the following command:
 ```console
 Amin@Maximus:Zam $ python3 src/main.py
