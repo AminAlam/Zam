@@ -2,3 +2,5 @@ venv
 __pycache__/
 *.db
 .DS_Store
+screenshots_null
+src/creds.json
