@@ -140,3 +140,15 @@ class Database():
         except Exception as e:
             self.error_log(e)
             return None
+
+    def remove_old_tweets_in_line(self, num_tweets_to_preserve=1000):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute('select count(*) from Tweets_Line')
+            rows = cursor.fetchone()
+            num_tweets = rows[0]
+            if num_tweets > num_tweets_to_preserve:
+                cursor.execute('delete from Tweets_Line where rowid in (select rowid from Tweets_Line order by rowid asc limit ?)', (num_tweets - num_tweets_to_preserve,))
+                self.conn.commit()
+        except Exception as e:
+            self.error_log(e)

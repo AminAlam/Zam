@@ -6,3 +6,4 @@ aiohttp>=3.4.4
 persiantools
 click
 telegraph
+tweet-capture
