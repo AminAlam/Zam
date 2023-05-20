@@ -1,16 +1,12 @@
 from configs import * 
 
 class TelegramBot():
-    def __init__(self, creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot) -> None:
+    def __init__(self, creds, db_log, twitter_api, time_diff, reference_snapshot) -> None:
         self.creds = creds
         self.db_log = db_log
         self.twitter_api = twitter_api
         self.time_diff = time_diff
-        self.gpt_suggestions_rate = gpt_suggestions_rate
         self.reference_snapshot = reference_snapshot
-        if self.gpt_suggestions_rate > 0:
-            import gpt_model
-            self.gpt_model = gpt_model.fa_GPT()
 
     def start(self, update, context=None):
         update.message.reply_text('Hello {}'.format(update.message.from_user.first_name))
@@ -54,10 +50,6 @@ class TelegramBot():
                 if 'telegraph_url' in tweet:
                     tg_text = f"{tg_text}\n\n📝 Read the full thread in <a href='{tweet['telegraph_url']}'>Telegra.ph</a>"
                     tg_text = f'{tg_text} ...'
-
-                if random.random() < self.gpt_suggestions_rate and len(tg_text) < 100:
-                    gpt_suggestion = self.gpt_model.generate(tg_text)
-                    tg_text = f"👤 Real tweet: {tg_text}\n\n🤖 GPT Story: {gpt_suggestion}"
 
                 if self.reference_snapshot:
                     if tweet['quoted_tweet_id'] != None or tweet['parent_tweet_id'] != None:
@@ -243,8 +235,8 @@ class TelegramBot():
         return menu
 
 class TelegramAdminBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, gpt_suggestions_rate, num_tweets_to_preserve, reference_snapshot) -> None:
-        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot)
+    def __init__(self, creds, twitter_api, db_log, suggestions_bot, time_diff, mahsa_message, num_tweets_to_preserve, reference_snapshot) -> None:
+        super(TelegramAdminBot, self).__init__(creds, db_log, twitter_api, time_diff, reference_snapshot)
         self.CHAT_ID = creds["ADMIN_CHAT_ID"]
         self.TOKEN = creds["ADMIN_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
@@ -475,13 +467,14 @@ class TelegramAdminBot(TelegramBot):
             time.sleep(1*10)
 
 class TelegramSuggestedTweetsBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, time_diff, gpt_suggestions_rate, reference_snapshot) -> None:
-        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, gpt_suggestions_rate, reference_snapshot)
+    def __init__(self, creds, twitter_api, db_log, time_diff, reference_snapshot, user_tweet_limit) -> None:
+        super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, reference_snapshot)
         self.CHAT_ID = creds["SUGGESTIONS_CHAT_ID"]
         self.TOKEN = creds["SUGGESTIONS_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
         self.bot = Bot(token=self.TOKEN)
-
+        self.user_tweet_limit = user_tweet_limit
+        
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
@@ -495,6 +488,10 @@ class TelegramSuggestedTweetsBot(TelegramBot):
 
     def receive_tweet(self, update, context=None):
         _, user_name = self.check_admin(update)
+        user_tweet_limit = self.user_tweet_limit
+        if utils.user_limit_exceeded(self.db_log.conn, user_name, user_tweet_limit):
+            update.message.reply_text(f'You have exceeded your hourly limit ({user_tweet_limit} tweets per hour). Please try again later.')
+            return
         tweet_url = update.message.text
         if "twitter.com" in tweet_url:
             tweet = self.twitter_api.get_tweet(tweet_url)
