@@ -467,13 +467,14 @@ class TelegramAdminBot(TelegramBot):
             time.sleep(1*10)
 
 class TelegramSuggestedTweetsBot(TelegramBot):
-    def __init__(self, creds, twitter_api, db_log, time_diff, reference_snapshot) -> None:
+    def __init__(self, creds, twitter_api, db_log, time_diff, reference_snapshot, user_tweet_limit) -> None:
         super(TelegramSuggestedTweetsBot, self).__init__(creds, db_log, twitter_api, time_diff, reference_snapshot)
         self.CHAT_ID = creds["SUGGESTIONS_CHAT_ID"]
         self.TOKEN = creds["SUGGESTIONS_TELEGRAM_BOT"]
         self.CHANNEL_NAME = creds["CHANNEL_NAME"]
         self.bot = Bot(token=self.TOKEN)
-
+        self.user_tweet_limit = user_tweet_limit
+        
         updater = Updater(self.TOKEN , use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
@@ -487,6 +488,10 @@ class TelegramSuggestedTweetsBot(TelegramBot):
 
     def receive_tweet(self, update, context=None):
         _, user_name = self.check_admin(update)
+        user_tweet_limit = self.user_tweet_limit
+        if utils.user_limit_exceeded(self.db_log.conn, user_name, user_tweet_limit):
+            update.message.reply_text(f'You have exceeded your hourly limit ({user_tweet_limit} tweets per hour). Please try again later.')
+            return
         tweet_url = update.message.text
         if "twitter.com" in tweet_url:
             tweet = self.twitter_api.get_tweet(tweet_url)

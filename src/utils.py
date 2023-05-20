@@ -100,7 +100,15 @@ def deleted_snapshots(media_list):
             if not media[0].startswith("http"):
                 os.remove(media[0])
 
-    
+def user_limit_exceeded(conn, user_name, user_tweet_limit):
+    time_1_hour_ago = dt.datetime.now() - dt.timedelta(hours=1)
+    cursor = conn.cursor()
+    cursor.execute('select * from Tweets where user_name=? and time>?', (user_name, time_1_hour_ago))
+    tweets = cursor.fetchall()
+    if len(tweets)>=user_tweet_limit:
+        return True
+    else:
+        return False
 
 
 class telegraph():
