@@ -25,10 +25,9 @@ Zam: A Telegram/Twitter Bot for posting tweets to Telegram channels
 
 ----------
 ## Table of contents			
-   * [Introduction](https://github.com/AminAlam/Zam#overview)
+   * [Overview](https://github.com/AminAlam/Zam#overview)
    * [Installation](https://github.com/AminAlam/Zam#installation)
    * [Usage](https://github.com/AminAlam/Zam#usage)
-   * [How It Works](https://github.com/AminAlam/Zam#how-it-works)
 
 ----------
 ## Overview
@@ -83,22 +82,22 @@ Usage: main.py [OPTIONS]
 Options:
   --time_diff TEXT                Difference between the time of the tweet and
                                   the time of the server running the bot.
-                                  Format: HOURS:MINUTES  [default: 0:30]
+                                  Format: HOURS:MINUTES
   --mahsa_message BOOLEAN         A message about Mahsa Amini's murder will be
                                   sent to the channel with a timer which is
-                                  updated evety few seconds.  [default: True]
-  --gpt_suggestions_rate INTEGER  A GPT language model will randomly complete
-                                  some short tweets with this rate. 0 means no
-                                  suggestoins  [default: 0]
+                                  updated evety few seconds.
   --reference_snapshot BOOLEAN    A snapshot of the reference tweets (Qouted
                                   tweet or the tweet which main tweet is a
                                   reply to) will be set as one of the media of
                                   the post. Note that this feature needs
-                                  chromium to function  [default: True]
+                                  chromium to function
   --num_tweets_to_preserve INTEGER RANGE
                                   Number of tweets to be saved in the
                                   database. Only last num_tweets_to_preserve
                                   tweets in the line will be preserved and the
-                                  old ones will be deleted  [default: 1000;
-                                  500<=x<=5000]
+                                  old ones will be deleted  [500<=x<=5000]
+  --user_tweet_limit INTEGER RANGE
+                                  Maximum number of the tweets that an user
+                                  can send during 1 hour period  [1<=x<=120]
+  --help                          Show this message and exit
 ```
