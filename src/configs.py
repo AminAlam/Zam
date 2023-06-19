@@ -18,6 +18,9 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 
 from persiantools.jdatetime import JalaliDate
 
+from bs4 import BeautifulSoup
+from selenium import webdriver
+import webdriver 
 import tweepy
 
 working_dir = os.path.dirname(os.path.abspath(__file__))
