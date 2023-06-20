@@ -495,18 +495,21 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             return
         tweet_url = update.message.text
         if "twitter.com" in tweet_url:
-            tweet = self.twitter_api.get_tweet(tweet_url)
-            tweet_id = tweet['tweet_id']
-            if self.db_log.check_tweet_existence(tweet_id):
-                update.message.reply_text('This tweet has already been sent to the bot')
-                return
             self.bot.sendMessage(chat_id=self.CHAT_ID, text=f'@{user_name}',timeout=1000)
-            update.message.reply_text('Please wait for the tweet to be processed...')
-            status = self.on_data(tweet)
-            update.message.reply_text(status[1])
-            log_args = status[-1]
-            log_args['user_name'] = user_name
-            log_args['admin'] = False
-            self.db_log.tweet_log(log_args)
+            self.bot.sendMessage(chat_id=self.CHAT_ID, text=tweet_url,timeout=1000)
+            update.message.reply_text('Successfully sent to the bot')
+            # tweet = self.twitter_api.get_tweet(tweet_url)
+            # tweet_id = tweet['tweet_id']
+            # if self.db_log.check_tweet_existence(tweet_id):
+            #     update.message.reply_text('This tweet has already been sent to the bot')
+            #     return
+            # self.bot.sendMessage(chat_id=self.CHAT_ID, text=f'@{user_name}',timeout=1000)
+            # update.message.reply_text('Please wait for the tweet to be processed...')
+            # status = self.on_data(tweet)
+            # update.message.reply_text(status[1])
+            # log_args = status[-1]
+            # log_args['user_name'] = user_name
+            # log_args['admin'] = False
+            # self.db_log.tweet_log(log_args)
         else:
             update.message.reply_text('Please send a valid tweet url')

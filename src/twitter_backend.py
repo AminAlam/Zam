@@ -25,7 +25,7 @@ class TwitterClient(object):
         tweet_date = dt.datetime.strptime(tweet_date, '%I:%M %p · %b %d, %Y')
         tweet_body = soup.find('div', {'class': 'css-1dbjc4n r-1s2bzr4'}).text
         tweet_body = tweet_body.split('Translate Tweet')[0]
-        media_div = soup.find('div', {'class': 'css-1dbjc4n'})
+        media_div = soup.find('div', {'class': 'css-1dbjc4n r-1ssbvtb r-1s2bzr4'})
         images = media_div.find_all('img')
         images = [image['src'] for image in images if '/profile_images/' not in image['src'] and '/media/' in image['src']]
         images = [image.split('&name')[0] for image in images]
