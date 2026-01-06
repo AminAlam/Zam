@@ -3,3 +3,21 @@ __pycache__/
 *.db
 .DS_Store
 screenshots_null
+screenshots/
+
+# Environment files
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
