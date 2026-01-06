@@ -1,9 +1,24 @@
-python-telegram-bot
+# Telegram Bot
+python-telegram-bot==13.15
+
+# Environment and Configuration
 python-dotenv
-tweepy
+
+# Database
+psycopg2-binary
+
+# HTTP Requests
 requests>=2.20.0
 aiohttp>=3.4.4
+
+# Persian Date/Time
 persiantools
+
+# CLI
 click
+
+# Telegraph API
 telegraph
-tweet-capture
+
+# Tweet Screenshot Capture
+selenium>=4.0.0

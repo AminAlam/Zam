@@ -1,28 +1,30 @@
-import json 
+"""
+Configuration module for Zam Telegram Bot.
+Loads environment variables and provides shared imports.
+"""
+
+import os
+import json
 import re
 import sys
-import os
 import threading
 import time
-import click
 import random
-import pytz
-from pathlib import Path
-import sqlite3
 import datetime as dt
+
+import click
 import requests
-from tweetcapture import TweetCapture
-import asyncio
-from telegram import Bot, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, MessageEntity
+from pathlib import Path
+from dotenv import load_dotenv
+
+from telegram import Bot, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 
 from persiantools.jdatetime import JalaliDate
+from tweetcapture import TweetCapture
 
-import tweepy
+# Load environment variables from .env file
+load_dotenv()
 
+# Working directory
 working_dir = os.path.dirname(os.path.abspath(__file__))
-creds_file = os.path.join(working_dir, 'creds.json')
-db_conf_file = os.path.join(working_dir, 'db_conf.json')
-
-
-import utils
