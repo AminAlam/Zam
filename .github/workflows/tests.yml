@@ -1,0 +1,197 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [master, main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:  # Allow manual trigger
+
+# Require approval for PRs from forks or first-time contributors
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # This job requires manual approval for external contributors
+  approve:
+    runs-on: ubuntu-latest
+    environment: 
+      name: test-approval
+    steps:
+      - name: Approval Gate
+        run: echo "Tests approved to run"
+
+  unit-tests:
+    needs: approve
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_integration.py \
+            -v \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -m "not integration and not slow and not docker"
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  integration-tests:
+    needs: approve
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: zam
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: zam_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Initialize database
+        run: |
+          PGPASSWORD=test_password psql -h localhost -U zam -d zam_db -f src/database/init.sql
+
+      - name: Run integration tests
+        run: |
+          pytest tests/test_integration.py \
+            -v \
+            -m "integration and not docker" \
+            --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: zam
+          DB_PASSWORD: test_password
+          DB_NAME: zam_db
+          CHROME_BIN: /usr/bin/google-chrome
+          ADMIN_TELEGRAM_BOT: test_token
+          SUGGESTIONS_TELEGRAM_BOT: test_token
+          MAIN_CHANNEL_CHAT_ID: "-1001234567890"
+          ADMIN_CHAT_ID: "-1009876543210"
+          SUGGESTIONS_CHAT_ID: "-1001111111111"
+          CHANNEL_NAME: "@TestChannel"
+          ADMIN_IDS: "admin1,admin2"
+
+  docker-build:
+    needs: approve
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: zam:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker Compose
+        run: |
+          # Create test .env file
+          cat > .env << EOF
+          DB_HOST=db
+          DB_PORT=5432
+          DB_USER=zam
+          DB_PASSWORD=test_password
+          DB_NAME=zam_db
+          ADMIN_TELEGRAM_BOT=test_token
+          SUGGESTIONS_TELEGRAM_BOT=test_token
+          MAIN_CHANNEL_CHAT_ID=-1001234567890
+          ADMIN_CHAT_ID=-1009876543210
+          SUGGESTIONS_CHAT_ID=-1001111111111
+          CHANNEL_NAME=@TestChannel
+          ADMIN_IDS=admin1,admin2
+          EOF
+          
+          # Start services
+          docker-compose up -d db
+          
+          # Wait for database
+          sleep 10
+          
+          # Check database is healthy
+          docker-compose exec -T db pg_isready -U zam
+          
+          # Cleanup
+          docker-compose down -v
+
+  all-tests-passed:
+    needs: [unit-tests, integration-tests, docker-build]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+             [ "${{ needs.integration-tests.result }}" != "success" ] || \
+             [ "${{ needs.docker-build.result }}" != "success" ]; then
+            echo "One or more test jobs failed"
+            exit 1
+          fi
+          echo "All tests passed!"
+
