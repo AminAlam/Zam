@@ -31,15 +31,13 @@ from utils import load_credentials
     help="Difference between the time of the tweet and the time of the server running the bot. Format: HOURS:MINUTES (default: 3:30 for Tehran timezone)"
 )
 @click.option(
-    '--mahsa_message',
+    '--mahsa_message/--no-mahsa_message',
     default=True,
-    type=bool,
     help="A message about Mahsa Amini's murder will be sent to the channel with a timer which is updated every few seconds."
 )
 @click.option(
-    '--reference_snapshot',
+    '--reference_snapshot/--no-reference_snapshot',
     default=True,
-    type=bool,
     help="A snapshot of the reference tweets (Quoted tweet or the tweet which main tweet is a reply to) will be set as one of the media of the post."
 )
 @click.option(
