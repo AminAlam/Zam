@@ -32,7 +32,7 @@ from utils import load_credentials
 )
 @click.option(
     '--mahsa_message/--no-mahsa_message',
-    default=True,
+    default=False,
     help="A message about Mahsa Amini's murder will be sent to the channel with a timer which is updated every few seconds."
 )
 @click.option(
