@@ -557,15 +557,13 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         )
 
         if queue_id:
-            # Notify admin channel about the suggestion
+            # Notify suggestions channel about the new suggestion
             try:
-                admin_chat_id = self.creds.get("ADMIN_CHAT_ID")
-                if admin_chat_id:
-                    Bot(token=self.creds["ADMIN_TELEGRAM_BOT"]).sendMessage(
-                        chat_id=admin_chat_id,
-                        text=f"📥 New suggestion from @{user_name}",
-                        timeout=1000
-                    )
+                self.bot.sendMessage(
+                    chat_id=self.CHAT_ID,
+                    text=f"📥 New suggestion from @{user_name}",
+                    timeout=1000
+                )
             except:
                 pass
 
