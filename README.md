@@ -250,6 +250,42 @@ docker-compose run app python src/main.py --time_diff 3:30 --user_tweet_limit 5
 ```
 
 ----------
+## Testing
+
+### Running Tests Locally
+
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Run all unit tests
+pytest tests/ -m "not integration and not slow"
+
+# Run with coverage
+pytest tests/ --cov=src --cov-report=html
+
+# Run integration tests (requires Chrome/Chromium)
+pytest tests/test_integration.py -m "integration"
+```
+
+### Test Structure
+
+- `tests/test_twitter_backend.py` - URL parsing, queue management tests
+- `tests/test_utils.py` - Utility function tests
+- `tests/test_database.py` - Database operation tests
+- `tests/test_integration.py` - End-to-end integration tests
+
+### GitHub Actions
+
+Tests run automatically on pull requests with the following workflow:
+1. **Approval Gate**: PRs require manual approval before tests run (protects against malicious code)
+2. **Unit Tests**: Fast tests that don't require external services
+3. **Integration Tests**: Tests with PostgreSQL and Chrome for screenshot capture
+4. **Docker Build**: Verifies the Docker image builds correctly
+
+The test suite uses Jack Dorsey's first tweet (`https://x.com/jack/status/20`) as a stable reference for screenshot capture tests.
+
+----------
 ## License
 
 This project is open source and available under the MIT License.
