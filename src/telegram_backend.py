@@ -66,7 +66,7 @@ class TelegramBot:
         tweet_url = tweet_data['tweet_url']
         capture_date_persian = tweet_data['capture_date_persian']
 
-        tg_text = f"✍️ <a href='{tweet_url}'>@{username}</a>\n"
+        tg_text = f"✍️ <a href='{tweet_url}'>{username}</a>\n"
         tg_text += f"📅 {capture_date_persian}\n\n"
         tg_text += f"📢 {self.CHANNEL_NAME}"
 
@@ -218,7 +218,16 @@ class TelegramBot:
         """Calculate the next available sending time."""
         import random
         tweets_line = self.db.get_tweets_line()
-        tweets_sent_time = [dt.datetime.strptime(tweet[3], '%Y-%m-%d %H:%M:%S') for tweet in tweets_line if tweet[3] is not None]
+        # PostgreSQL schema: id(0), tweet_id(1), tweet_text(2), media(3), sending_time(4), entities(5), query(6)
+        tweets_sent_time = []
+        for tweet in tweets_line:
+            sending_time = tweet[4]  # sending_time is at index 4
+            if sending_time is not None:
+                # Handle both string and datetime objects
+                if isinstance(sending_time, str):
+                    tweets_sent_time.append(dt.datetime.strptime(sending_time, '%Y-%m-%d %H:%M:%S'))
+                else:
+                    tweets_sent_time.append(sending_time)
         time_now = dt.datetime.now()
         current_hour = int(time_now.strftime('%H'))
         current_minute = int(time_now.strftime('%M'))
