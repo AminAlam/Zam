@@ -116,6 +116,57 @@ class TwitterClient:
             return f"https://twitter.com/{parsed['username']}/status/{parsed['tweet_id']}"
         return tweet_url
 
+    def _dismiss_cookie_banner(self, driver):
+        """
+        Dismiss or hide cookie consent banners on Twitter/X.
+        """
+        try:
+            # JavaScript to hide cookie banners and other popups
+            hide_elements_js = """
+            // Hide cookie banner by various selectors
+            const selectorsToHide = [
+                '[data-testid="BottomBar"]',
+                '[role="dialog"]',
+                '[data-testid="sheetDialog"]',
+                '[aria-label="Cookie banner"]',
+                'div[class*="cookie"]',
+                'div[class*="Cookie"]',
+                'div[class*="consent"]',
+                'div[class*="Consent"]',
+                '#layers > div:last-child',
+                'div[data-testid="toast"]'
+            ];
+            
+            selectorsToHide.forEach(selector => {
+                const elements = document.querySelectorAll(selector);
+                elements.forEach(el => {
+                    el.style.display = 'none';
+                    el.style.visibility = 'hidden';
+                });
+            });
+            
+            // Try to click refuse/close buttons
+            const buttonTexts = ['Refuse', 'Decline', 'Close', 'Not now', 'Maybe later'];
+            const buttons = document.querySelectorAll('button, [role="button"]');
+            buttons.forEach(btn => {
+                const text = btn.textContent.toLowerCase();
+                if (buttonTexts.some(t => text.includes(t.toLowerCase()))) {
+                    try { btn.click(); } catch(e) {}
+                }
+            });
+            
+            // Hide the bottom bar that often contains cookie notice
+            const bottomBars = document.querySelectorAll('div[style*="bottom: 0"]');
+            bottomBars.forEach(el => {
+                if (el.textContent.toLowerCase().includes('cookie')) {
+                    el.style.display = 'none';
+                }
+            });
+            """
+            driver.execute_script(hide_elements_js)
+        except Exception as e:
+            print(f"Could not dismiss cookie banner: {e}")
+
     def _capture_screenshot(self, tweet_url, output_path):
         """
         Capture a screenshot of a tweet.
@@ -145,6 +196,10 @@ class TwitterClient:
                 # Give it a moment to fully render
                 time.sleep(2)
                 
+                # Dismiss cookie banners and popups
+                self._dismiss_cookie_banner(driver)
+                time.sleep(0.5)
+                
                 # Try to take screenshot of just the tweet
                 tweet_element.screenshot(output_path)
                 
@@ -152,6 +207,8 @@ class TwitterClient:
                 print(f"Could not capture tweet element, taking full page screenshot: {e}")
                 # Fallback to full page screenshot
                 time.sleep(3)
+                self._dismiss_cookie_banner(driver)
+                time.sleep(0.5)
                 driver.save_screenshot(output_path)
             
             return output_path
