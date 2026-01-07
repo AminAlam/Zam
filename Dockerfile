@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y \
     chromium-driver \
     fonts-liberation \
     fonts-noto-color-emoji \
+    fonts-noto \
+    fonts-noto-core \
+    fonts-freefont-ttf \
+    fonts-dejavu-core \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -22,6 +26,7 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
+    && fc-cache -f -v \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Chrome/Chromium environment variables

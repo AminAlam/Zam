@@ -56,7 +56,9 @@ class TwitterClient:
         chrome_options.add_argument('--disable-infobars')
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--disable-popup-blocking')
-        chrome_options.add_argument('--lang=en-US')
+        # Enable proper font rendering for Persian/Arabic text
+        chrome_options.add_argument('--font-render-hinting=none')
+        chrome_options.add_argument('--disable-font-subpixel-positioning')
         
         # Use system chromium binary
         chrome_binary = os.environ.get('CHROME_BIN', '/usr/bin/chromium')
