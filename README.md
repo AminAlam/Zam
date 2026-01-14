@@ -44,14 +44,26 @@ Zam is a Telegram bot that captures tweets as screenshots and allows admins to s
 ----------
 ## Features
 
-- 📸 **Tweet Screenshot Capture**: Captures tweets as high-quality screenshots using headless Chrome
+### Core Features
+- 📸 **Tweet Screenshot Capture**: Captures tweets as high-quality screenshots using headless Chrome with full Persian/Arabic font support
 - 🔄 **Priority Queue System**: Admin tweets are processed before user suggestions
-- ⏰ **Scheduled Posting**: Schedule tweets for later posting with flexible timing options
+- ⏰ **Smart Auto-Scheduling**: Intelligent scheduling algorithm with peak hour optimization and minimum gap enforcement
 - 🐳 **Docker Containerized**: Easy deployment with Docker Compose
 - 🗄️ **PostgreSQL Database**: Reliable data storage with connection pooling
 - 👥 **Multi-Bot Architecture**: Separate bots for admins and user suggestions
 - 🚦 **Rate Limiting**: Configurable hourly limits for user suggestions
 - 🇮🇷 **Persian Calendar Support**: Displays dates in Persian/Jalali calendar
+
+### Admin Bot Features
+- 📊 **Monitoring Dashboard** (`/stats`): Real-time statistics including queue status, scheduled posts, and peak hour availability
+- ⏰ **Manual & Auto Scheduling**: Choose specific times or let the smart algorithm pick optimal slots
+- 📈 **Visual Progress Bars**: See hourly slot availability at a glance
+
+### Suggestions Bot Features
+- 🎯 **Interactive Menu**: User-friendly button-based navigation
+- 📤 **Tweet Submission**: Easy tweet URL submission with queue position feedback
+- 💬 **Categorized Feedback**: Users can send suggestions, bug reports, or questions to admins
+- 📊 **Submission Tracking**: Users can view their remaining hourly submissions
 
 ----------
 ## Installation
@@ -198,12 +210,35 @@ docker-compose run app python src/main.py --time_diff 3:30 --user_tweet_limit 5
 
 **Admin Bot:**
 - Send a tweet URL (twitter.com or x.com) to add it to the queue
-- `/queue` - View current queue status
 - `/start` - Start the bot
+- `/queue` - View current queue status
+- `/stats` - View comprehensive channel statistics:
+  ```
+  📊 Channel Statistics
+  
+  📝 Queue Status:
+     • Pending captures: 3
+     • Currently processing: 1
+  
+  📅 Scheduled Posts:
+     • Awaiting posting: 8
+     • Next post: 20:15 (in 12 min)
+  
+  📈 Today's Activity:
+     • Posts sent: 24
+  
+  ⏰ Next 6 Hours Availability:
+  20:00 ████████░░ 4/6
+  21:00 ██████░░░░ 3/6
+  22:00 ██░░░░░░░░ 1/6
+  23:00 ░░░░░░░░░░ FULL
+  ```
 
 **Suggestions Bot:**
-- Send a tweet URL to suggest it for the channel
-- `/start` - Start the bot
+- `/start` - Open the interactive menu with options:
+  - 📤 **Submit Tweet**: Send a tweet URL to suggest for the channel
+  - 💬 **Send Feedback**: Send a message to admins (categorized as suggestion, bug report, or question)
+  - 📊 **My Remaining Submissions**: Check your hourly submission limit status
 
 ### How It Works
 
@@ -211,8 +246,26 @@ docker-compose run app python src/main.py --time_diff 3:30 --user_tweet_limit 5
 2. **Queue Processing**: The tweet is added to a priority queue (admin tweets have higher priority)
 3. **Screenshot Capture**: A background worker captures the tweet as a screenshot
 4. **Admin Review**: The captured tweet is sent to the admin channel with scheduling options
-5. **Schedule or Post**: Admins can schedule the tweet or post it immediately
+5. **Schedule or Post**: Admins can schedule the tweet manually or use **Auto timing** for smart scheduling
 6. **Channel Posting**: At the scheduled time, the tweet is posted to the main channel
+
+### Smart Auto-Scheduling
+
+The "Auto timing" feature uses an intelligent algorithm to schedule tweets:
+
+- **Peak Hour Optimization**: More tweets are scheduled during high-engagement hours (8 PM - 1 AM)
+- **Quiet Hour Reduction**: Fewer tweets during low-activity hours (2 AM - 6 AM)
+- **Minimum Gap Enforcement**: Ensures at least 5 minutes between consecutive tweets
+- **Next-Day Rollover**: Automatically schedules for tomorrow if today's slots are full
+
+**Hour Weight Distribution:**
+| Period | Hours | Relative Weight |
+|--------|-------|-----------------|
+| Quiet | 2-6 AM | Low (0.3x) |
+| Morning | 7-11 AM | Medium (0.7x) |
+| Afternoon | 12-7 PM | Normal (0.8x) |
+| **Evening** | 8-10 PM | **High (1.5x)** |
+| **Night** | 11 PM-1 AM | **High (1.3x)** |
 
 ----------
 ## Architecture
@@ -243,7 +296,7 @@ docker-compose run app python src/main.py --time_diff 3:30 --user_tweet_limit 5
 │  │           PostgreSQL Container                   │    │
 │  │  ┌─────────────────────────────────────────┐    │    │
 │  │  │  Tables: tweets, tweet_queue, states,   │    │    │
-│  │  │          tweets_line, errors            │    │    │
+│  │  │  tweets_line, errors, user_feedback     │    │    │
 │  │  └─────────────────────────────────────────┘    │    │
 │  └─────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────┘

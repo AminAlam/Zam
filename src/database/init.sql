@@ -65,3 +65,15 @@ CREATE TABLE IF NOT EXISTS tweet_queue (
 CREATE INDEX IF NOT EXISTS idx_queue_status_priority ON tweet_queue(status, priority DESC, added_time ASC);
 CREATE INDEX IF NOT EXISTS idx_queue_tweet_id ON tweet_queue(tweet_id);
 
+-- User feedback table: stores user messages/suggestions/bug reports
+CREATE TABLE IF NOT EXISTS user_feedback (
+    id SERIAL PRIMARY KEY,
+    user_name VARCHAR(255),
+    chat_id VARCHAR(255),
+    category VARCHAR(50),  -- 'suggestion', 'bug', 'question'
+    message TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON user_feedback(user_name);
+CREATE INDEX IF NOT EXISTS idx_feedback_category ON user_feedback(category);

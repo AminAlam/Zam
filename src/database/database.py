@@ -421,3 +421,119 @@ class Database:
         except Exception as e:
             self.error_log(e)
             return 0
+
+    # ==================== Monitoring / Stats ====================
+
+    def get_scheduled_count(self):
+        """Get the count of tweets scheduled for posting (have sending_time set)."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT COUNT(*) FROM tweets_line WHERE sending_time IS NOT NULL AND sending_time > NOW()'
+                )
+                return cursor.fetchone()[0]
+        except Exception as e:
+            self.error_log(e)
+            return 0
+
+    def get_next_scheduled_tweet(self):
+        """Get the next scheduled tweet time."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT sending_time FROM tweets_line WHERE sending_time IS NOT NULL AND sending_time > NOW() ORDER BY sending_time ASC LIMIT 1'
+                )
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            self.error_log(e)
+            return None
+
+    def get_posts_sent_today(self):
+        """Get the count of tweets posted today."""
+        try:
+            today_start = dt.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM tweets WHERE status = 'Success' AND time >= %s",
+                    (today_start,)
+                )
+                return cursor.fetchone()[0]
+        except Exception as e:
+            self.error_log(e)
+            return 0
+
+    def get_hourly_distribution(self, hours_ahead=6):
+        """
+        Get the scheduled tweet distribution for the next N hours.
+        
+        Returns:
+            list of tuples: [(hour, count, max_slots), ...]
+        """
+        try:
+            time_now = dt.datetime.now()
+            distribution = []
+            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                for i in range(hours_ahead):
+                    target_hour = (time_now.hour + i) % 24
+                    hour_start = time_now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=i)
+                    hour_end = hour_start + dt.timedelta(hours=1)
+                    
+                    cursor.execute(
+                        'SELECT COUNT(*) FROM tweets_line WHERE sending_time >= %s AND sending_time < %s',
+                        (hour_start, hour_end)
+                    )
+                    count = cursor.fetchone()[0]
+                    
+                    # Max slots = 6 per hour (every 10 minutes)
+                    distribution.append((target_hour, count, 6))
+            
+            return distribution
+        except Exception as e:
+            self.error_log(e)
+            return []
+
+    def get_processing_count(self):
+        """Get the count of tweets currently being processed."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM tweet_queue WHERE status = 'processing'")
+                return cursor.fetchone()[0]
+        except Exception as e:
+            self.error_log(e)
+            return 0
+
+    # ==================== User Feedback ====================
+
+    def add_user_feedback(self, user_name, chat_id, category, message):
+        """Add a user feedback message to the database."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''INSERT INTO user_feedback (user_name, chat_id, category, message, created_at)
+                       VALUES (%s, %s, %s, %s, NOW())
+                       RETURNING id''',
+                    (user_name, chat_id, category, message)
+                )
+                return cursor.fetchone()[0]
+        except Exception as e:
+            self.error_log(e)
+            return None
+
+    def get_user_remaining_submissions(self, user_name, hourly_limit):
+        """Get remaining submissions for a user this hour."""
+        try:
+            used = self.get_user_tweet_count_last_hour(user_name)
+            remaining = max(0, hourly_limit - used)
+            return remaining, hourly_limit
+        except Exception as e:
+            self.error_log(e)
+            return hourly_limit, hourly_limit
