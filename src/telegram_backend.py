@@ -1,13 +1,192 @@
 import os
 import json
 import time
+import random
+import queue
 import threading
 import datetime as dt
 from telegram import Bot, InputMediaPhoto, InputMediaVideo, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+from telegram.error import NetworkError, TimedOut, RetryAfter
 from persiantools.jdatetime import JalaliDate
 
 from utils import covert_tweet_time_to_desired_time, form_time_counter_message, deleted_snapshots, telegraph
+
+
+# Default timeout for Telegram API calls (in seconds)
+DEFAULT_TIMEOUT = 30
+
+
+class TelegramMessageQueue:
+    """
+    Thread-safe queue for outgoing Telegram messages.
+    
+    Features:
+    - Single sender thread with rate limiting
+    - Retry with exponential backoff
+    - Proper error handling and logging
+    - Graceful shutdown support
+    """
+    
+    def __init__(self, bot, db=None, rate_limit=0.5, max_retries=3):
+        """
+        Initialize the message queue.
+        
+        Args:
+            bot: Telegram Bot instance
+            db: Database instance for error logging (optional)
+            rate_limit: Minimum seconds between messages
+            max_retries: Maximum retry attempts for failed messages
+        """
+        self.bot = bot
+        self.db = db
+        self.rate_limit = rate_limit
+        self.max_retries = max_retries
+        self._queue = queue.Queue()
+        self._running = False
+        self._sender_thread = None
+    
+    def start(self):
+        """Start the sender thread."""
+        if self._running:
+            return
+        self._running = True
+        self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
+        self._sender_thread.start()
+        print("Message queue sender started")
+    
+    def stop(self):
+        """Stop the sender thread."""
+        self._running = False
+        # Put a None to unblock the queue
+        self._queue.put(None)
+        if self._sender_thread:
+            self._sender_thread.join(timeout=5)
+        print("Message queue sender stopped")
+    
+    def send_message(self, chat_id, text, **kwargs):
+        """Queue a text message for sending."""
+        self._queue.put(('message', chat_id, text, kwargs))
+    
+    def send_media_group(self, chat_id, media, **kwargs):
+        """Queue a media group for sending."""
+        self._queue.put(('media_group', chat_id, media, kwargs))
+    
+    def edit_message_text(self, chat_id, message_id, text, **kwargs):
+        """Queue an edit message request."""
+        self._queue.put(('edit_message', chat_id, message_id, text, kwargs))
+    
+    def edit_message_media(self, chat_id, message_id, media, **kwargs):
+        """Queue an edit media request."""
+        self._queue.put(('edit_media', chat_id, message_id, media, kwargs))
+    
+    def send_message_sync(self, chat_id, text, **kwargs):
+        """
+        Send a message synchronously (bypasses queue).
+        Use only when you need the return value immediately.
+        """
+        return self._send_with_retry(
+            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+        )
+    
+    def send_media_group_sync(self, chat_id, media, **kwargs):
+        """
+        Send a media group synchronously (bypasses queue).
+        Use only when you need the return value immediately.
+        """
+        return self._send_with_retry(
+            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+        )
+    
+    def _sender_loop(self):
+        """Main sender loop - processes queued messages."""
+        while self._running:
+            try:
+                item = self._queue.get(timeout=1)
+                
+                if item is None:
+                    continue
+                
+                msg_type = item[0]
+                
+                try:
+                    if msg_type == 'message':
+                        _, chat_id, text, kwargs = item
+                        self._send_with_retry(
+                            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+                        )
+                    
+                    elif msg_type == 'media_group':
+                        _, chat_id, media, kwargs = item
+                        self._send_with_retry(
+                            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+                        )
+                    
+                    elif msg_type == 'edit_message':
+                        _, chat_id, message_id, text, kwargs = item
+                        self._send_with_retry(
+                            lambda: self.bot.editMessageText(chat_id=chat_id, message_id=message_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+                        )
+                    
+                    elif msg_type == 'edit_media':
+                        _, chat_id, message_id, media, kwargs = item
+                        self._send_with_retry(
+                            lambda: self.bot.editMessageMedia(chat_id=chat_id, message_id=message_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+                        )
+                    
+                except Exception as e:
+                    print(f"Failed to send message after retries: {e}")
+                    if self.db:
+                        self.db.error_log(e)
+                
+                # Rate limiting
+                time.sleep(self.rate_limit)
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Message queue error: {e}")
+                if self.db:
+                    self.db.error_log(e)
+    
+    def _send_with_retry(self, send_func):
+        """
+        Execute a send function with exponential backoff retry.
+        
+        Args:
+            send_func: Callable that performs the actual send
+            
+        Returns:
+            The result of send_func if successful
+            
+        Raises:
+            The last exception if all retries fail
+        """
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                return send_func()
+            except RetryAfter as e:
+                # Telegram asked us to wait
+                wait_time = e.retry_after + 1
+                print(f"Rate limited, waiting {wait_time}s...")
+                time.sleep(wait_time)
+            except (NetworkError, TimedOut) as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
+                    # Exponential backoff with jitter
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"Network error, retry {attempt + 1}/{self.max_retries} in {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+            except Exception as e:
+                # Non-retryable error
+                raise
+        
+        if last_exception:
+            raise last_exception
 
 
 class TelegramBot:
@@ -19,6 +198,8 @@ class TelegramBot:
         self.twitter_api = twitter_api
         self.time_diff = time_diff
         self.reference_snapshot = reference_snapshot
+        # Message queue will be initialized by subclasses after bot is created
+        self.message_queue = None
 
     def start(self, update, context=None):
         """Handle /start command."""
@@ -45,10 +226,14 @@ class TelegramBot:
                 else:
                     media_tmp = InputMediaPhoto(media_url, caption=caption, parse_mode="HTML")
             elif media[1] == "video" or media[1] == "animated_gif":
-                if entities:
-                    media_tmp = InputMediaVideo(media[0], caption=caption, caption_entities=caption_entities)
+                if not media[0].startswith("http"):
+                    media_url = open(media[0], 'rb')
                 else:
-                    media_tmp = InputMediaVideo(media[0], caption=caption, parse_mode="HTML")
+                    media_url = media[0]
+                if entities:
+                    media_tmp = InputMediaVideo(media_url, caption=caption, caption_entities=caption_entities)
+                else:
+                    media_tmp = InputMediaVideo(media_url, caption=caption, parse_mode="HTML")
             media_array.append(media_tmp)
         return media_array
 
@@ -77,7 +262,7 @@ class TelegramBot:
         Handle a captured tweet from the queue worker.
         
         Args:
-            tweet_data: Dict with screenshot_path, username, tweet_id, etc.
+            tweet_data: Dict with screenshot_path, video_paths, username, tweet_id, etc.
             
         Returns:
             True if successful, False otherwise
@@ -85,6 +270,7 @@ class TelegramBot:
         try:
             tweet_id = tweet_data['tweet_id']
             screenshot_path = tweet_data['screenshot_path']
+            video_paths = tweet_data.get('video_paths', [])
             chat_id = tweet_data.get('chat_id')
             user_name = tweet_data.get('user_name', '')
             bot_type = tweet_data.get('bot_type', 'suggestions')
@@ -96,24 +282,29 @@ class TelegramBot:
             # Format the message
             tg_text = self.format_tweet_message(tweet_data)
 
-            # Create media array with the screenshot
+            # Create media array with the screenshot and any videos
             media_list = [[screenshot_path, 'photo']]
+            
+            # Add videos to media list (they will be sent as a media group)
+            for video_path in video_paths:
+                if video_path and os.path.exists(video_path):
+                    media_list.append([video_path, 'video'])
+            
             media_array = self.make_media_array(tg_text, media_list)
 
-            # Send to the appropriate channel
-            sent_message = self.bot.sendMediaGroup(
+            # Send to the appropriate channel (sync because we need the message_id)
+            sent_messages = self.message_queue.send_media_group_sync(
                 chat_id=self.CHAT_ID,
-                media=media_array,
-                timeout=1000
-            )[0]
+                media=media_array
+            )
+            sent_message = sent_messages[0]
 
             # Add time selection buttons
             reply_markup, markup_text = self.make_time_options(tweet_id)
-            self.bot.sendMessage(
+            self.message_queue.send_message_sync(
                 chat_id=self.CHAT_ID,
                 text=markup_text,
                 reply_markup=reply_markup,
-                timeout=1000,
                 reply_to_message_id=sent_message.message_id
             )
 
@@ -134,16 +325,18 @@ class TelegramBot:
             }
             self.db.tweet_log(log_args)
 
-            # Notify the user that their tweet was processed
+            # Notify the user that their tweet was processed (async, don't need result)
             if chat_id:
-                try:
-                    self.bot.sendMessage(
-                        chat_id=chat_id,
-                        text=f"✅ Your tweet has been processed and sent to the admin channel!",
-                        timeout=1000
-                    )
-                except Exception as e:
-                    print(f"Failed to notify user: {e}")
+                video_count = len(video_paths)
+                if video_count > 0:
+                    notification_text = f"✅ Your tweet has been processed!\n📸 Screenshot captured\n🎬 {video_count} video(s) captured"
+                else:
+                    notification_text = f"✅ Your tweet has been processed and sent to the admin channel!"
+                
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=notification_text
+                )
 
             return True
 
@@ -214,41 +407,145 @@ class TelegramBot:
         markup_text = "Please select a time for sending this tweet."
         return reply_markup, markup_text
 
-    def _get_next_sending_time(self, desired_num_tweets_per_hour=6):
-        """Calculate the next available sending time."""
+    # Hour weights for auto-timing: Peak hours get more tweets
+    # Index = hour (0-23), Value = weight multiplier
+    HOUR_WEIGHTS = [
+        0.3, 0.3, 0.3, 0.3, 0.3, 0.3,  # 0-5 AM (quiet hours)
+        0.5, 0.7, 0.7, 0.7, 0.7, 0.8,  # 6-11 AM (morning)
+        0.8, 0.8, 0.8, 0.8, 0.8, 0.8,  # 12-5 PM (afternoon)
+        0.9, 0.9, 1.5, 1.5, 1.5, 1.3,  # 6-11 PM (evening/night peak)
+    ]
+
+    def _get_next_sending_time(self, desired_num_tweets_per_hour=6, min_gap_minutes=5):
+        """
+        Calculate the next available sending time using weighted slot selection.
+        
+        Features:
+        - Peak hour weighting (evening/night get more tweets)
+        - Minimum gap enforcement between tweets
+        - Quiet hours with reduced frequency
+        - Next-day rollover support
+        
+        Args:
+            desired_num_tweets_per_hour: Target tweets per hour (used for slot calculation)
+            min_gap_minutes: Minimum minutes between consecutive tweets
+            
+        Returns:
+            datetime: The next available sending time
+        """
         import random
+        
+        time_now = dt.datetime.now().replace(second=0, microsecond=0)
+        
+        # Get all scheduled tweet times
+        scheduled_times = self._get_scheduled_times()
+        
+        # Try to find a slot for today and tomorrow
+        for day_offset in range(2):
+            base_date = time_now + dt.timedelta(days=day_offset)
+            
+            # Generate candidate slots (every 5 minutes)
+            candidate_slots = self._generate_candidate_slots(base_date, time_now, day_offset)
+            
+            # Filter slots that respect minimum gap
+            valid_slots = self._filter_by_gap(candidate_slots, scheduled_times, min_gap_minutes)
+            
+            if valid_slots:
+                # Apply hour weights and select
+                selected_slot = self._weighted_random_select(valid_slots)
+                return selected_slot
+        
+        # Fallback: return next available 5-minute mark
+        fallback_time = time_now + dt.timedelta(minutes=min_gap_minutes)
+        # Round up to next 5-minute mark
+        minutes_to_add = (5 - fallback_time.minute % 5) % 5
+        return fallback_time + dt.timedelta(minutes=minutes_to_add)
+
+    def _get_scheduled_times(self):
+        """Get all currently scheduled tweet times."""
         tweets_line = self.db.get_tweets_line()
-        # PostgreSQL schema: id(0), tweet_id(1), tweet_text(2), media(3), sending_time(4), entities(5), query(6)
-        tweets_sent_time = []
+        scheduled_times = []
         for tweet in tweets_line:
             sending_time = tweet[4]  # sending_time is at index 4
             if sending_time is not None:
-                # Handle both string and datetime objects
                 if isinstance(sending_time, str):
-                    tweets_sent_time.append(dt.datetime.strptime(sending_time, '%Y-%m-%d %H:%M:%S'))
+                    scheduled_times.append(dt.datetime.strptime(sending_time, '%Y-%m-%d %H:%M:%S'))
                 else:
-                    tweets_sent_time.append(sending_time)
-        time_now = dt.datetime.now()
-        current_hour = int(time_now.strftime('%H'))
-        current_minute = int(time_now.strftime('%M'))
+                    scheduled_times.append(sending_time)
+        return scheduled_times
 
-        for hour in range(current_hour, 24):
-            tweets_in_this_hour = [tweet for tweet in tweets_sent_time if tweet.hour == hour]
-            if len(tweets_in_this_hour) < desired_num_tweets_per_hour:
-                random_minute = random.randint(current_minute, 59)
-                random_hour = random.randint(current_hour, current_hour + 2)
-                if random_hour < 0:
-                    random_hour = 0
-                elif random_hour >= 24:
-                    random_hour = 23
-                desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
-                break
+    def _generate_candidate_slots(self, base_date, time_now, day_offset):
+        """Generate candidate time slots for a given day."""
+        slots = []
+        
+        if day_offset == 0:
+            # Today: start from current time + 2 minutes, rounded to next 5-min mark
+            start_time = time_now + dt.timedelta(minutes=2)
+            start_minute = ((start_time.minute // 5) + 1) * 5
+            if start_minute >= 60:
+                start_hour = start_time.hour + 1
+                start_minute = 0
+            else:
+                start_hour = start_time.hour
         else:
-            random_hour = random.randint(current_hour, 23)
-            random_minute = random.randint(current_minute, 59)
-            desired_time = time_now.replace(hour=random_hour, minute=random_minute, second=0)
+            # Tomorrow: start from 6 AM
+            start_hour = 6
+            start_minute = 0
+        
+        # Generate slots from start time until end of day
+        for hour in range(start_hour, 24):
+            minute_start = start_minute if hour == start_hour else 0
+            for minute in range(minute_start, 60, 5):
+                slot_time = base_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if day_offset > 0:
+                    slot_time = slot_time.replace(day=base_date.day)
+                slots.append(slot_time)
+        
+        return slots
 
-        return desired_time
+    def _filter_by_gap(self, candidate_slots, scheduled_times, min_gap_minutes):
+        """Filter slots that maintain minimum gap from scheduled tweets."""
+        valid_slots = []
+        min_gap = dt.timedelta(minutes=min_gap_minutes)
+        
+        for slot in candidate_slots:
+            is_valid = True
+            for scheduled in scheduled_times:
+                if abs(slot - scheduled) < min_gap:
+                    is_valid = False
+                    break
+            if is_valid:
+                valid_slots.append(slot)
+        
+        return valid_slots
+
+    def _weighted_random_select(self, valid_slots):
+        """Select a slot using hour-based weights."""
+        import random
+        
+        if not valid_slots:
+            return None
+        
+        # Calculate weights for each slot based on hour
+        weights = []
+        for slot in valid_slots:
+            hour_weight = self.HOUR_WEIGHTS[slot.hour]
+            weights.append(hour_weight)
+        
+        # Normalize weights
+        total_weight = sum(weights)
+        if total_weight == 0:
+            return random.choice(valid_slots)
+        
+        # Weighted random selection
+        r = random.uniform(0, total_weight)
+        cumulative = 0
+        for slot, weight in zip(valid_slots, weights):
+            cumulative += weight
+            if r <= cumulative:
+                return slot
+        
+        return valid_slots[-1]  # Fallback
 
     def get_user_name(self, update):
         """Extract username from update object."""
@@ -302,15 +599,20 @@ class TelegramAdminBot(TelegramBot):
         self.num_tweets_to_preserve = num_tweets_to_preserve
         self.telegraph_client = telegraph(account_name=self.CHANNEL_NAME.split('@')[1])
 
+        # Initialize message queue for rate-limited sending
+        self.message_queue = TelegramMessageQueue(self.bot, db=self.db)
+        self.message_queue.start()
+
         # Set up the Twitter API callback for admin bot
         self.twitter_api.set_telegram_callback(self._handle_captured_tweet)
 
-        # Set up handlers
+        # Set up handlers - handle messages directly (no thread spawning)
         updater = Updater(self.TOKEN, use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", self.start))
         dp.add_handler(CommandHandler("queue", self.queue_status))
-        dp.add_handler(MessageHandler(Filters.text, self.text_handler_thread))
+        dp.add_handler(CommandHandler("stats", self.stats_command))
+        dp.add_handler(MessageHandler(Filters.text, self.text_handler))
         dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
         updater.start_polling()
 
@@ -349,13 +651,75 @@ class TelegramAdminBot(TelegramBot):
         pending_count = self.db.get_pending_count()
         update.message.reply_text(f"📊 Queue Status:\n\n📝 Pending tweets: {pending_count}")
 
-    def text_handler_thread(self, update, context=None):
-        """Handle text messages in a separate thread."""
-        text_handler_thread = threading.Thread(target=self.text_handler, args=(update, context,))
-        text_handler_thread.start()
+    def stats_command(self, update, context=None):
+        """Handle /stats command - show comprehensive channel statistics."""
+        admin_bool, _ = self.check_admin(update)
+        if not admin_bool:
+            return
+
+        try:
+            # Gather stats
+            pending_count = self.db.get_pending_count()
+            processing_count = self.db.get_processing_count()
+            scheduled_count = self.db.get_scheduled_count()
+            posts_today = self.db.get_posts_sent_today()
+            next_scheduled = self.db.get_next_scheduled_tweet()
+            hourly_dist = self.db.get_hourly_distribution(hours_ahead=6)
+
+            # Format next scheduled time
+            if next_scheduled:
+                if isinstance(next_scheduled, str):
+                    next_scheduled = dt.datetime.strptime(next_scheduled, '%Y-%m-%d %H:%M:%S')
+                time_until = next_scheduled - dt.datetime.now()
+                minutes_until = int(time_until.total_seconds() / 60)
+                next_str = f"{next_scheduled.strftime('%H:%M')} (in {minutes_until} min)"
+            else:
+                next_str = "None scheduled"
+
+            # Build the stats message
+            stats_msg = "📊 *Channel Statistics*\n\n"
+            
+            # Queue status
+            stats_msg += "📝 *Queue Status:*\n"
+            stats_msg += f"   • Pending captures: {pending_count}\n"
+            stats_msg += f"   • Currently processing: {processing_count}\n\n"
+            
+            # Scheduled posts
+            stats_msg += "📅 *Scheduled Posts:*\n"
+            stats_msg += f"   • Awaiting posting: {scheduled_count}\n"
+            stats_msg += f"   • Next post: {next_str}\n\n"
+            
+            # Today's activity
+            stats_msg += "📈 *Today's Activity:*\n"
+            stats_msg += f"   • Posts sent: {posts_today}\n\n"
+            
+            # Peak hours availability
+            stats_msg += "⏰ *Next 6 Hours Availability:*\n"
+            for hour, count, max_slots in hourly_dist:
+                # Create visual progress bar
+                filled = min(count, max_slots)
+                empty = max_slots - filled
+                bar = "█" * filled + "░" * empty
+                hour_str = f"{hour:02d}:00"
+                status = "FULL" if count >= max_slots else f"{count}/{max_slots}"
+                stats_msg += f"`{hour_str}` {bar} {status}\n"
+
+            # Use message queue for response
+            self.message_queue.send_message(
+                chat_id=update.message.chat_id,
+                text=stats_msg,
+                parse_mode='Markdown'
+            )
+
+        except Exception as e:
+            self.db.error_log(e)
+            self.message_queue.send_message(
+                chat_id=update.message.chat_id,
+                text="❌ Error fetching statistics. Please try again."
+            )
 
     def text_handler(self, update, context=None):
-        """Handle incoming text messages."""
+        """Handle incoming text messages (no thread spawning)."""
         try:
             admin_bool, user_name = self.check_admin(update)
             chat_id = update.message.chat_id
@@ -370,7 +734,10 @@ class TelegramAdminBot(TelegramBot):
             if "twitter.com" in tweet_url or "x.com" in tweet_url:
                 self.receive_tweet(update, user_name)
             else:
-                update.message.reply_text('Please send a valid tweet URL (twitter.com or x.com)')
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text='Please send a valid tweet URL (twitter.com or x.com)'
+                )
 
     def receive_tweet(self, update, user_name):
         """Process a received tweet URL."""
@@ -386,13 +753,17 @@ class TelegramAdminBot(TelegramBot):
         )
 
         if queue_id:
-            update.message.reply_text(
-                f"✅ Tweet added to queue!\n\n"
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text=f"✅ Tweet added to queue!\n\n"
                 f"📍 Position: {result}\n"
                 f"⏳ You'll be notified when it's processed."
             )
         else:
-            update.message.reply_text(f"❌ Could not add tweet: {result}")
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text=f"❌ Could not add tweet: {result}"
+            )
 
     def time_counter(self):
         """Background thread for the Mahsa Amini time counter."""
@@ -405,16 +776,24 @@ class TelegramAdminBot(TelegramBot):
             diff_time = time_now - mahsa_death_time
             message_caption = form_time_counter_message(diff_time, message_txt)
             media_array = self.make_media_array(message_caption, [['https://revolution.aminalam.info/static/images/wlf_flag.png', 'photo']])
-            message_id = self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID, media=media_array)
-            message_id = message_id[0]['message_id']
-            self.db.set_time_counter_message_id(str(message_id))
+            try:
+                result = self.message_queue.send_media_group_sync(
+                    chat_id=self.MAIN_CHANNEL_CHAT_ID,
+                    media=media_array
+                )
+                message_id = result[0]['message_id']
+                self.db.set_time_counter_message_id(str(message_id))
+            except Exception as e:
+                print(f"Failed to create time counter message: {e}")
+                return
 
         while True:
             try:
                 time_now = dt.datetime.now()
                 diff_time = time_now - mahsa_death_time
                 message_caption = form_time_counter_message(diff_time, message_txt)
-                self.bot.editMessageMedia(
+                # Queue the edit (async)
+                self.message_queue.edit_message_media(
                     chat_id=self.MAIN_CHANNEL_CHAT_ID,
                     message_id=message_id,
                     media=InputMediaPhoto('https://revolution.aminalam.info/static/images/wlf_flag.png', message_caption)
@@ -472,15 +851,18 @@ class TelegramAdminBot(TelegramBot):
                                             )
                                         entities_list_converted.append(converted_format)
 
+                                    # Send via message queue (sync to ensure delivery before cleanup)
                                     if media_list:
                                         media_array = self.make_media_array(tweet_text, media_list, entities=entities_list_converted if entities_list_converted else None)
-                                        self.bot.sendMediaGroup(chat_id=self.MAIN_CHANNEL_CHAT_ID, media=media_array, timeout=1000)
+                                        self.message_queue.send_media_group_sync(
+                                            chat_id=self.MAIN_CHANNEL_CHAT_ID,
+                                            media=media_array
+                                        )
                                     else:
-                                        self.bot.sendMessage(
+                                        self.message_queue.send_message_sync(
                                             chat_id=self.MAIN_CHANNEL_CHAT_ID,
                                             text=tweet_text,
                                             disable_web_page_preview=True,
-                                            timeout=1000,
                                             entities=entities_list_converted if entities_list_converted else None
                                         )
 
@@ -492,16 +874,14 @@ class TelegramAdminBot(TelegramBot):
                                     reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
                                     success_message = "Sent successfully."
 
-                                    try:
-                                        if query and 'message' in query:
-                                            self.bot.editMessageText(
-                                                chat_id=query['message']['chat']['id'],
-                                                message_id=query['message']['message_id'],
-                                                text=success_message,
-                                                reply_markup=reply_markup
-                                            )
-                                    except:
-                                        pass
+                                    # Queue the edit (async is fine here)
+                                    if query and 'message' in query:
+                                        self.message_queue.edit_message_text(
+                                            chat_id=query['message']['chat']['id'],
+                                            message_id=query['message']['message_id'],
+                                            text=success_message,
+                                            reply_markup=reply_markup
+                                        )
 
                                 except Exception as e:
                                     self.db.error_log(e)
@@ -513,7 +893,12 @@ class TelegramAdminBot(TelegramBot):
 
 
 class TelegramSuggestedTweetsBot(TelegramBot):
-    """Bot for handling suggested tweets from users."""
+    """Bot for handling suggested tweets from users with interactive menu."""
+
+    # User states for conversation flow
+    STATE_IDLE = 'idle'
+    STATE_AWAITING_TWEET = 'awaiting_tweet'
+    STATE_AWAITING_FEEDBACK = 'awaiting_feedback'
 
     def __init__(self, creds, twitter_api, db, time_diff, reference_snapshot, user_tweet_limit):
         super().__init__(creds, db, twitter_api, time_diff, reference_snapshot)
@@ -523,18 +908,249 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         self.bot = Bot(token=self.TOKEN)
         self.user_tweet_limit = user_tweet_limit
 
-        # Set up handlers
+        # Store user feedback category temporarily
+        self.user_feedback_category = {}
+
+        # Initialize message queue for rate-limited sending
+        self.message_queue = TelegramMessageQueue(self.bot, db=self.db)
+        self.message_queue.start()
+
+        # Set up handlers - handle messages directly (no thread spawning)
         updater = Updater(self.TOKEN, use_context=True)
         dp = updater.dispatcher
-        dp.add_handler(CommandHandler("start", self.start))
-        dp.add_handler(MessageHandler(Filters.text, self.text_handler_thread))
-        dp.add_handler(CallbackQueryHandler(self.callback_query_handler))
+        dp.add_handler(CommandHandler("start", self.start_menu))
+        dp.add_handler(MessageHandler(Filters.text, self.handle_text_message))
+        dp.add_handler(CallbackQueryHandler(self.menu_callback_handler))
         updater.start_polling()
 
-    def text_handler_thread(self, update, context=None):
-        """Handle text messages in a separate thread."""
-        text_handler_thread = threading.Thread(target=self.receive_tweet, args=(update, context,))
-        text_handler_thread.start()
+    def start_menu(self, update, context=None):
+        """Show the main interactive menu."""
+        user_name = self.get_user_name(update)
+        chat_id = str(update.message.chat_id)
+        
+        # Reset user state
+        self.db.set_state(chat_id, self.STATE_IDLE)
+        
+        # Get remaining submissions
+        if self.user_tweet_limit > 0:
+            remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
+            limit_text = f"\n\n📊 Submissions remaining: {remaining}/{total} this hour"
+        else:
+            limit_text = ""
+        
+        welcome_text = (
+            f"🎯 *Welcome to {self.CHANNEL_NAME} Suggestions Bot!*\n\n"
+            f"What would you like to do?"
+            f"{limit_text}"
+        )
+        
+        # Create menu buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("📤 Submit Tweet", callback_data="MENU|submit_tweet"),
+                InlineKeyboardButton("💬 Send Feedback", callback_data="MENU|feedback")
+            ],
+            [
+                InlineKeyboardButton("📊 My Remaining Submissions", callback_data="MENU|remaining")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        self.message_queue.send_message(
+            chat_id=chat_id,
+            text=welcome_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def menu_callback_handler(self, update, context=None):
+        """Handle menu button callbacks."""
+        query = update.callback_query
+        query_data = query.data.split('|')
+        query_type = query_data[0]
+        
+        user_name = query.from_user.username or str(query.from_user.id)
+        chat_id = str(query.message.chat_id)
+        
+        if query_type == 'MENU':
+            action = query_data[1]
+            
+            if action == 'submit_tweet':
+                self._handle_submit_tweet_menu(query, chat_id)
+            
+            elif action == 'feedback':
+                self._show_feedback_categories(query)
+            
+            elif action == 'remaining':
+                self._show_remaining_submissions(query, user_name)
+            
+            elif action == 'back':
+                self._show_main_menu(query, user_name)
+        
+        elif query_type == 'FEEDBACK':
+            category = query_data[1]
+            self._handle_feedback_category(query, chat_id, category)
+        
+        # Also handle parent class callbacks (TIME, CANCEL, SENT)
+        elif query_type in ('TIME', 'CANCEL', 'SENT'):
+            self.callback_query_handler(update, context)
+
+    def _handle_submit_tweet_menu(self, query, chat_id):
+        """Set state to await tweet URL."""
+        self.db.set_state(chat_id, self.STATE_AWAITING_TWEET)
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(
+            "📤 *Submit a Tweet*\n\n"
+            "Please send me the tweet URL (twitter.com or x.com link).\n\n"
+            "Example: `https://x.com/user/status/123456789`",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def _show_feedback_categories(self, query):
+        """Show feedback category selection."""
+        keyboard = [
+            [
+                InlineKeyboardButton("💡 Suggestion", callback_data="FEEDBACK|suggestion"),
+                InlineKeyboardButton("🐛 Bug Report", callback_data="FEEDBACK|bug")
+            ],
+            [
+                InlineKeyboardButton("❓ Question", callback_data="FEEDBACK|question")
+            ],
+            [
+                InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(
+            "💬 *Send Feedback*\n\n"
+            "What type of message would you like to send?",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def _handle_feedback_category(self, query, chat_id, category):
+        """Set state to await feedback message."""
+        self.db.set_state(chat_id, self.STATE_AWAITING_FEEDBACK)
+        self.user_feedback_category[chat_id] = category
+        
+        category_emojis = {
+            'suggestion': '💡',
+            'bug': '🐛',
+            'question': '❓'
+        }
+        category_names = {
+            'suggestion': 'Suggestion',
+            'bug': 'Bug Report',
+            'question': 'Question'
+        }
+        
+        emoji = category_emojis.get(category, '💬')
+        name = category_names.get(category, 'Feedback')
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(
+            f"{emoji} *{name}*\n\n"
+            f"Please type your message and send it.\n\n"
+            f"Your message will be forwarded to the channel admins.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def _show_remaining_submissions(self, query, user_name):
+        """Show remaining submissions for the user."""
+        if self.user_tweet_limit > 0:
+            remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
+            
+            # Create a visual progress bar
+            used = total - remaining
+            bar_filled = "█" * used
+            bar_empty = "░" * remaining
+            
+            text = (
+                f"📊 *Your Submission Status*\n\n"
+                f"Used: {used}/{total} this hour\n"
+                f"`[{bar_filled}{bar_empty}]`\n\n"
+                f"✅ Remaining: *{remaining}* submissions\n\n"
+                f"_Limit resets every hour._"
+            )
+        else:
+            text = (
+                f"📊 *Your Submission Status*\n\n"
+                f"✅ *Unlimited* submissions allowed!\n\n"
+                f"_There is no hourly limit set for this bot._"
+            )
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    def _show_main_menu(self, query, user_name):
+        """Return to main menu."""
+        chat_id = str(query.message.chat_id)
+        self.db.set_state(chat_id, self.STATE_IDLE)
+        
+        # Clear any pending feedback category
+        if chat_id in self.user_feedback_category:
+            del self.user_feedback_category[chat_id]
+        
+        # Get remaining submissions
+        if self.user_tweet_limit > 0:
+            remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
+            limit_text = f"\n\n📊 Submissions remaining: {remaining}/{total} this hour"
+        else:
+            limit_text = ""
+        
+        welcome_text = (
+            f"🎯 *Welcome to {self.CHANNEL_NAME} Suggestions Bot!*\n\n"
+            f"What would you like to do?"
+            f"{limit_text}"
+        )
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📤 Submit Tweet", callback_data="MENU|submit_tweet"),
+                InlineKeyboardButton("💬 Send Feedback", callback_data="MENU|feedback")
+            ],
+            [
+                InlineKeyboardButton("📊 My Remaining Submissions", callback_data="MENU|remaining")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    def handle_text_message(self, update, context=None):
+        """Route text messages based on user state (no thread spawning)."""
+        chat_id = str(update.message.chat_id)
+        state = self.db.get_state(chat_id)
+        
+        if state == self.STATE_AWAITING_TWEET:
+            self.receive_tweet(update, context)
+        elif state == self.STATE_AWAITING_FEEDBACK:
+            self.receive_feedback(update, context)
+        else:
+            # Check if it's a tweet URL - handle it directly
+            text = update.message.text.strip()
+            if "twitter.com" in text or "x.com" in text:
+                self.receive_tweet(update, context)
+            else:
+                # Prompt user to use menu
+                keyboard = [[InlineKeyboardButton("📋 Open Menu", callback_data="MENU|back")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text="👋 Please use the menu to interact with this bot.\n\n"
+                         "Send /start or click the button below to open the menu.",
+                    reply_markup=reply_markup
+                )
 
     def receive_tweet(self, update, context=None):
         """Process a suggested tweet from a user."""
@@ -542,19 +1158,31 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         chat_id = str(update.message.chat_id)
         tweet_url = update.message.text.strip()
 
+        # Reset state
+        self.db.set_state(chat_id, self.STATE_IDLE)
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
         # Check rate limit (if enabled)
         if self.user_tweet_limit > 0:
             user_count = self.db.get_user_tweet_count_last_hour(user_name)
             if user_count >= self.user_tweet_limit:
-                update.message.reply_text(
-                    f'⚠️ You have exceeded your hourly limit ({self.user_tweet_limit} tweets per hour).\n'
-                    f'Please try again later.'
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=f'⚠️ You have exceeded your hourly limit ({self.user_tweet_limit} tweets per hour).\n'
+                         f'Please try again later.',
+                    reply_markup=reply_markup
                 )
                 return
 
         # Check if it's a valid tweet URL
         if "twitter.com" not in tweet_url and "x.com" not in tweet_url:
-            update.message.reply_text('Please send a valid tweet URL (twitter.com or x.com)')
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text='❌ Please send a valid tweet URL (twitter.com or x.com)',
+                reply_markup=reply_markup
+            )
             return
 
         # Add to queue with low priority (suggestions)
@@ -566,20 +1194,76 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         )
 
         if queue_id:
-            # Notify suggestions channel about the new suggestion
-            try:
-                self.bot.sendMessage(
+            # Notify suggestions channel about the new suggestion (async)
+            self.message_queue.send_message(
                     chat_id=self.CHAT_ID,
-                    text=f"📥 New suggestion from @{user_name}",
-                    timeout=1000
-                )
-            except:
-                pass
+                text=f"📥 New suggestion from @{user_name}"
+            )
 
-            update.message.reply_text(
-                f"✅ Your tweet suggestion has been added to the queue!\n\n"
+            # Show remaining submissions
+            if self.user_tweet_limit > 0:
+                remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
+                remaining_text = f"\n\n📊 Remaining submissions: {remaining}/{total}"
+            else:
+                remaining_text = ""
+
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text=f"✅ Your tweet suggestion has been added to the queue!\n\n"
                 f"📍 Position: {result}\n"
                 f"⏳ You'll be notified when it's processed."
+                     f"{remaining_text}",
+                reply_markup=reply_markup
             )
         else:
-            update.message.reply_text(f"❌ Could not add tweet: {result}")
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text=f"❌ Could not add tweet: {result}",
+                reply_markup=reply_markup
+            )
+
+    def receive_feedback(self, update, context=None):
+        """Process feedback message from user."""
+        user_name = self.get_user_name(update) or 'Anonymous'
+        chat_id = str(update.message.chat_id)
+        message = update.message.text.strip()
+        
+        # Get the category
+        category = self.user_feedback_category.get(chat_id, 'general')
+        
+        # Reset state and clear category
+        self.db.set_state(chat_id, self.STATE_IDLE)
+        if chat_id in self.user_feedback_category:
+            del self.user_feedback_category[chat_id]
+        
+        # Save to database
+        self.db.add_user_feedback(user_name, chat_id, category, message)
+        
+        # Format category for display
+        category_display = {
+            'suggestion': '💡 SUGGESTION',
+            'bug': '🐛 BUG REPORT',
+            'question': '❓ QUESTION'
+        }
+        category_text = category_display.get(category, '💬 FEEDBACK')
+        
+        # Forward to admin channel (async)
+        admin_message = (
+            f"{category_text} from @{user_name}:\n\n"
+            f"\"{message}\""
+        )
+        self.message_queue.send_message(
+            chat_id=self.CHAT_ID,
+            text=admin_message
+        )
+        
+        # Confirm to user
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        self.message_queue.send_message(
+            chat_id=chat_id,
+            text="✅ Thank you for your feedback!\n\n"
+                 "Your message has been sent to the channel admins.",
+            reply_markup=reply_markup
+        )

@@ -1,6 +1,8 @@
 import os
 import re
+import sys
 import random
+import asyncio
 import threading
 import time
 import datetime as dt
@@ -12,28 +14,65 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from persiantools.jdatetime import JalaliDate
 
+# #region agent log
+print("[DEBUG] twitter_backend.py module loaded")
+# #endregion
+
+# Import tweetcapture (installed via pip install -e in Dockerfile)
+from tweetcapture import TweetCapture
+
 
 class TwitterClient:
     """
-    Twitter client that captures tweets as screenshots.
+    Twitter client that captures tweets as screenshots and videos.
     Manages a background queue worker for processing tweet capture requests.
     """
 
-    def __init__(self, db, telegram_callback=None):
+    def __init__(self, db, telegram_callback=None, enable_video_capture=True):
+        # #region agent log
+        print(f"[DEBUG] TwitterClient.__init__ called, enable_video_capture={enable_video_capture}")
+        # #endregion
         """
         Initialize the Twitter client.
         
         Args:
             db: Database instance for queue management
             telegram_callback: Callback function to send processed tweets to Telegram
+            enable_video_capture: Whether to capture videos from tweets
         """
         self.db = db
         self.telegram_callback = telegram_callback
         self.screenshots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'screenshots')
+        self.videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'videos')
         
-        # Ensure screenshots directory exists
+        # Ensure directories exist
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir)
+        if not os.path.exists(self.videos_dir):
+            os.makedirs(self.videos_dir)
+
+        # Video capture settings
+        self.enable_video_capture = enable_video_capture
+        self.x_display = os.environ.get('DISPLAY', ':99')
+        
+        # Initialize TweetCapture
+        self.tweet_capture = TweetCapture(
+            mode=3,  # Show everything
+            night_mode=2,  # Dark mode (0=light, 1=dim, 2=dark)
+            overwrite=True,
+            radius=15
+        )
+        
+        # Configure video capture if enabled
+        if self.enable_video_capture:
+            # Allow toggling audio capture via env (default on)
+            video_with_audio = os.environ.get("ZAM_VIDEO_WITH_AUDIO", "1") == "1"
+            self.tweet_capture.enable_video_capture(
+                output_dir=self.videos_dir,
+                x_display=self.x_display,
+                max_duration=120,  # 2 minutes max
+                with_audio=video_with_audio
+            )
 
         # Queue worker control
         self._worker_running = False
@@ -227,15 +266,33 @@ class TwitterClient:
                 except:
                     pass
 
+    def _run_async(self, coro):
+        """
+        Run an async coroutine in a synchronous context.
+        
+        Args:
+            coro: Coroutine to run
+            
+        Returns:
+            Result of the coroutine
+        """
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(coro)
+
     def capture_tweet(self, tweet_url):
         """
-        Capture a tweet screenshot and return metadata.
+        Capture a tweet screenshot and videos, return metadata.
         
         Args:
             tweet_url: URL of the tweet to capture
             
         Returns:
-            dict with screenshot_path, username, tweet_id, capture_time, tweet_url
+            dict with screenshot_path, video_paths, username, tweet_id, capture_time, tweet_url
             or None if capture fails
         """
         parsed = self.parse_tweet_url(tweet_url)
@@ -253,25 +310,76 @@ class TwitterClient:
         # Normalize the URL for capture
         normalized_url = self.normalize_tweet_url(tweet_url)
 
-        # Capture the screenshot
+        # Capture the screenshot and videos using TweetCapture
         try:
-            result = self._capture_screenshot(normalized_url, output_path)
+            # #region agent log
+            print(f"[DEBUG] capture_tweet called, enable_video_capture={self.enable_video_capture}, tweet_url={tweet_url}")
+            # #endregion
+            if self.enable_video_capture:
+                # #region agent log
+                print(f"[DEBUG] Calling screenshot_with_videos, url={normalized_url}")
+                # #endregion
+                # Use the new screenshot_with_videos method
+                result = self._run_async(
+                    self.tweet_capture.screenshot_with_videos(
+                        url=normalized_url,
+                        screenshot_path=output_path,
+                        video_output_dir=self.videos_dir
+                    )
+                )
+                
+                screenshot_path = result.get('screenshot_path')
+                video_paths = result.get('video_paths', [])
+                # #region agent log
+                print(f"[DEBUG] screenshot_with_videos returned: screenshot={screenshot_path}, videos={video_paths}")
+                # #endregion
+            else:
+                # Use traditional screenshot method
+                screenshot_path = self._run_async(
+                    self.tweet_capture.screenshot(
+                        url=normalized_url,
+                        path=output_path
+                    )
+                )
+                video_paths = []
 
-            if result and os.path.exists(output_path):
+            if screenshot_path and os.path.exists(screenshot_path):
                 capture_time = dt.datetime.now()
                 capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
 
                 return {
-                    'screenshot_path': output_path,
+                    'screenshot_path': screenshot_path,
+                    'video_paths': video_paths,
                     'username': username,
                     'tweet_id': tweet_id,
                     'capture_time': capture_time,
                     'capture_date_persian': capture_date_persian,
-                    'tweet_url': normalized_url
+                    'tweet_url': normalized_url,
+                    'has_videos': len(video_paths) > 0
                 }
         except Exception as e:
             print(f"Error in capture_tweet: {e}")
             self.db.error_log(e)
+            
+            # Fallback to direct Selenium capture if TweetCapture fails
+            try:
+                result = self._capture_screenshot(normalized_url, output_path)
+                if result and os.path.exists(output_path):
+                    capture_time = dt.datetime.now()
+                    capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
+                    return {
+                        'screenshot_path': output_path,
+                        'video_paths': [],
+                        'username': username,
+                        'tweet_id': tweet_id,
+                        'capture_time': capture_time,
+                        'capture_date_persian': capture_date_persian,
+                        'tweet_url': normalized_url,
+                        'has_videos': False
+                    }
+            except Exception as fallback_error:
+                print(f"Fallback capture also failed: {fallback_error}")
+                self.db.error_log(fallback_error)
 
         return None
 
@@ -321,6 +429,9 @@ class TwitterClient:
         Args:
             queue_item: Tuple from database (id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time)
         """
+        # #region agent log
+        print(f"[DEBUG] _process_queue_item called, queue_item={queue_item}")
+        # #endregion
         queue_id = queue_item[0]
         tweet_url = queue_item[1]
         tweet_id = queue_item[2]

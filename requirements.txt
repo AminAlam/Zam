@@ -20,8 +20,10 @@ click
 # Telegraph API
 telegraph
 
-# Tweet Screenshot Capture
+# Tweet Screenshot and Video Capture
 selenium>=4.0.0
+webdriver-manager>=3.8.5
+Pillow>=9.3.0
 
 # Testing (dev dependencies)
 pytest>=7.0.0
