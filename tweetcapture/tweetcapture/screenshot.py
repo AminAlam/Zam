@@ -809,7 +809,7 @@ class TweetCapture:
             return None
 
     async def screenshot_with_videos(self, url, screenshot_path=None, video_output_dir=None,
-                                     mode=None, night_mode=None, show_parent_tweets=None,
+                                     mode=0, night_mode=None, show_parent_tweets=None,
                                      parent_tweets_limit=None, show_mentions_count=None,
                                      overwrite=None, radius=None, scale=None):
         """
