@@ -43,7 +43,7 @@ class ScreenRecorder:
     """
 
     def __init__(self, output_path: str, region: Tuple[int, int, int, int], 
-                 display: str = ":99", fps: int = 20, with_audio: bool = True):
+                 display: str = ":99", fps: int = None, with_audio: bool = True):
         """
         Initialize the screen recorder.
         
@@ -51,13 +51,14 @@ class ScreenRecorder:
             output_path: Path to save the recorded video (MP4)
             region: Tuple of (x, y, width, height) defining the capture region
             display: X display to capture from (Linux only)
-            fps: Frames per second for recording (20 is a good middle ground for Xvfb)
+            fps: Frames per second (reads from ZAM_VIDEO_FPS env, default 15)
             with_audio: Whether to capture audio
         """
         self.output_path = output_path
         self.region = region
         self.display = display
-        self.fps = fps
+        # Read FPS from environment variable, default to 15
+        self.fps = fps if fps is not None else int(os.environ.get("ZAM_VIDEO_FPS", "15"))
         self.with_audio = with_audio
         self._process: Optional[subprocess.Popen] = None
         self._recording = False
@@ -69,6 +70,10 @@ class ScreenRecorder:
         # Ensure dimensions are even (required by H.264)
         width = width if width % 2 == 0 else width + 1
         height = height if height % 2 == 0 else height + 1
+        
+        # Read configurable parameters from environment
+        thread_queue = os.environ.get("ZAM_VIDEO_THREAD_QUEUE", "4096")
+        crf = os.environ.get("ZAM_VIDEO_CRF", "32")
         
         cmd = ['ffmpeg', '-y']  # -y to overwrite output file
         
@@ -95,7 +100,7 @@ class ScreenRecorder:
             cmd.extend([
                 '-f', 'x11grab',
                 '-draw_mouse', '0', 
-                '-thread_queue_size', '4096',  # Significantly increase buffer
+                '-thread_queue_size', thread_queue,
                 '-framerate', str(self.fps),
                 '-video_size', f'{width}x{height}',
                 '-i', f'{self.display}+{x},{y}'
@@ -105,7 +110,7 @@ class ScreenRecorder:
                 # Linux audio capture via PulseAudio
                 cmd.extend([
                     '-f', 'pulse',
-                    '-thread_queue_size', '4096',
+                    '-thread_queue_size', thread_queue,
                     '-ac', '2',
                     '-i', 'default'
                 ])
@@ -115,7 +120,7 @@ class ScreenRecorder:
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-tune', 'zerolatency',
-            '-crf', '32',  # Lower bit rate to ease CPU pressure
+            '-crf', crf,  # Configurable via ZAM_VIDEO_CRF env var
             '-pix_fmt', 'yuv420p',
         ])
         
