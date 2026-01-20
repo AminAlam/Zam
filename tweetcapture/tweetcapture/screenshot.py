@@ -138,8 +138,14 @@ class TweetCapture:
             elements, main = self.__get_tweets(driver, self.show_parent_tweets if show_parent_tweets is None else show_parent_tweets, self.parent_tweets_limit if parent_tweets_limit is None else parent_tweets_limit, self.show_mentions_count if show_mentions_count is None else show_mentions_count)
             if len(elements) == 0:
                 raise Exception("Tweets not found")
-            else:
-                for i, element in enumerate(elements):
+            
+            # Extract tweet text from the main tweet element before modifying DOM
+            tweet_text = ''
+            if main >= 0 and main < len(elements):
+                tweet_text = self.extract_tweet_text(elements[main])
+            
+            # Continue with screenshot processing
+            for i, element in enumerate(elements):
                     if i == main:
                         self.__code_main_footer_items_new(element, self.mode if mode is None else mode)
                     else:
@@ -215,7 +221,7 @@ class TweetCapture:
         except Exception as err:
             driver.quit()
             raise err
-        return path
+        return {'screenshot_path': path, 'tweet_text': tweet_text}
         
     def set_wait_time(self, time):
         if 1.0 <= time <= 10.0: 
@@ -524,6 +530,30 @@ class TweetCapture:
             List of video player WebElements
         """
         return element.find_elements(By.CSS_SELECTOR, '[data-testid="videoPlayer"]')
+
+    def extract_tweet_text(self, element) -> str:
+        """
+        Extract the tweet text from a tweet element using DOM selectors.
+        
+        This is more accurate than OCR as it gets the exact text from the HTML.
+        
+        Args:
+            element: Selenium WebElement representing the tweet
+            
+        Returns:
+            Tweet text string, or empty string if not found
+        """
+        try:
+            # Twitter uses data-testid="tweetText" for the main tweet content
+            text_elements = element.find_elements(By.CSS_SELECTOR, '[data-testid="tweetText"]')
+            if text_elements:
+                # Get the text from the first (main) tweet text element
+                tweet_text = text_elements[0].text
+                logger.info(f"Extracted tweet text: {len(tweet_text)} characters")
+                return tweet_text
+        except Exception as e:
+            logger.warning(f"Failed to extract tweet text: {e}")
+        return ''
 
     def _get_video_duration_from_player(self, driver, video_player) -> float:
         """
@@ -896,6 +926,9 @@ class TweetCapture:
             # Get the main tweet element
             main_element = elements[main] if main >= 0 and main < len(elements) else elements[0]
             
+            # Extract tweet text from the main tweet element before modifying DOM
+            tweet_text = self.extract_tweet_text(main_element)
+            
             # Detect and capture videos from the main tweet
             # #region agent log
             print(f"[DEBUG] Checking video capture: capture_videos={self.capture_videos}, video_output_dir={self.video_output_dir}")
@@ -1014,5 +1047,6 @@ class TweetCapture:
         return {
             'screenshot_path': screenshot_path,
             'video_paths': video_paths,
-            'has_videos': len(video_paths) > 0
+            'has_videos': len(video_paths) > 0,
+            'tweet_text': tweet_text
         }
