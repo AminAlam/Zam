@@ -5,13 +5,15 @@ RUN apt-get update && apt-get install -y \
     # Browser and driver
     chromium \
     chromium-driver \
-    # Fonts for proper text rendering
+    # Fonts for proper text rendering (including Persian/Arabic)
     fonts-liberation \
     fonts-noto-color-emoji \
     fonts-noto \
     fonts-noto-core \
     fonts-freefont-ttf \
     fonts-dejavu-core \
+    fonts-farsiweb \
+    fonts-hosny-amiri \
     # Browser dependencies
     libasound2 \
     libatk-bridge2.0-0 \
@@ -37,6 +39,10 @@ RUN apt-get update && apt-get install -y \
     # X11 libraries for screen capture
     x11-utils \
     x11-xserver-utils \
+    # Tesseract OCR and language packs
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-fas \
     && fc-cache -f -v \
     && rm -rf /var/lib/apt/lists/*
 

@@ -5,6 +5,7 @@ import random
 import queue
 import threading
 import datetime as dt
+import html
 from telegram import Bot, InputMediaPhoto, InputMediaVideo, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter
@@ -250,10 +251,81 @@ class TelegramBot:
         username = tweet_data['username']
         tweet_url = tweet_data['tweet_url']
         capture_date_persian = tweet_data['capture_date_persian']
+        ocr_text = tweet_data.get('ocr_text', '')
 
         tg_text = f"✍️ <a href='{tweet_url}'>{username}</a>\n"
-        tg_text += f"📅 {capture_date_persian}\n\n"
-        tg_text += f"📢 {self.CHANNEL_NAME}"
+        tg_text += f"📅 {capture_date_persian}\n"
+        
+        # Add OCR-detected tweet text if available
+        if ocr_text and ocr_text.strip():
+            # Truncate if too long (Telegram caption limit is 1024 chars)
+            clean_ocr = ocr_text.strip()
+            if len(clean_ocr) > 500:
+                clean_ocr = clean_ocr[:500] + '...'
+            # Escape HTML special characters to prevent parsing errors
+            clean_ocr = html.escape(clean_ocr)
+            tg_text += f"\n📝 {clean_ocr}\n"
+        
+        tg_text += f"\n📢 {self.CHANNEL_NAME}"
+
+        return tg_text
+    
+    def format_multi_tweet_message(self, batch_data):
+        """
+        Format a batch of captured tweets for display in Telegram.
+        
+        Creates a caption with all unique authors mentioned.
+        
+        Args:
+            batch_data: Dict with items (list of tweet data), unique_authors, capture_date_persian
+            
+        Returns:
+            Formatted message string
+        """
+        unique_authors = batch_data.get('unique_authors', [])
+        capture_date_persian = batch_data.get('capture_date_persian', '')
+        items = batch_data.get('items', [])
+        
+        # Build author links - each author linked to their tweet
+        author_links = []
+        author_urls = {}
+        
+        # Map authors to their tweet URLs
+        for item in items:
+            username = item.get('username', '')
+            tweet_url = item.get('tweet_url', '')
+            if username and username not in author_urls:
+                author_urls[username] = tweet_url
+        
+        # Create linked author names
+        for author in unique_authors:
+            url = author_urls.get(author, f"https://twitter.com/{author}")
+            author_links.append(f"<a href='{url}'>{author}</a>")
+        
+        # Format the author line
+        if len(author_links) == 1:
+            authors_text = author_links[0]
+        elif len(author_links) == 2:
+            authors_text = f"{author_links[0]} و {author_links[1]}"  # Persian "and"
+        else:
+            # Join all but last with comma, then add last with "and"
+            authors_text = "، ".join(author_links[:-1]) + f" و {author_links[-1]}"
+        
+        tg_text = f"✍️ {authors_text}\n"
+        tg_text += f"📅 {capture_date_persian}\n"
+        
+        # Add OCR text from the first tweet if available
+        ocr_texts = [item.get('ocr_text', '') for item in items if item.get('ocr_text')]
+        if ocr_texts:
+            first_ocr = ocr_texts[0].strip()
+            if first_ocr:
+                if len(first_ocr) > 400:
+                    first_ocr = first_ocr[:400] + '...'
+                # Escape HTML special characters to prevent parsing errors
+                first_ocr = html.escape(first_ocr)
+                tg_text += f"\n📝 {first_ocr}\n"
+        
+        tg_text += f"\n📢 {self.CHANNEL_NAME}"
 
         return tg_text
 
@@ -261,19 +333,29 @@ class TelegramBot:
         """
         Handle a captured tweet from the queue worker.
         
+        Supports both single tweets and batch results.
+        
         Args:
             tweet_data: Dict with screenshot_path, video_paths, username, tweet_id, etc.
+                       Or batch result with is_batch=True, items list, unique_authors
             
         Returns:
             True if successful, False otherwise
         """
         try:
+            # Check if this is a batch result
+            if tweet_data.get('is_batch', False):
+                return self._handle_batch_result(tweet_data)
+            
+            # Single tweet processing
             tweet_id = tweet_data['tweet_id']
             screenshot_path = tweet_data['screenshot_path']
             video_paths = tweet_data.get('video_paths', [])
             chat_id = tweet_data.get('chat_id')
             user_name = tweet_data.get('user_name', '')
             bot_type = tweet_data.get('bot_type', 'suggestions')
+            ocr_author = tweet_data.get('ocr_author', '')
+            ocr_text = tweet_data.get('ocr_text', '')
 
             # Check if already posted
             if self.db.check_tweet_existence(tweet_id):
@@ -321,7 +403,9 @@ class TelegramBot:
                 'tweet_text': tg_text,
                 'user_name': user_name,
                 'status': 'Success',
-                'admin': bot_type == 'admin'
+                'admin': bot_type == 'admin',
+                'ocr_author': ocr_author,
+                'ocr_text': ocr_text
             }
             self.db.tweet_log(log_args)
 
@@ -341,6 +425,132 @@ class TelegramBot:
             return True
 
         except Exception as e:
+            self.db.error_log(e)
+            return False
+    
+    def _handle_batch_result(self, batch_data):
+        """
+        Handle a batch of captured tweets, sending them as a single media group.
+        
+        Args:
+            batch_data: Dict with is_batch=True, items, unique_authors, etc.
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            items = batch_data.get('items', [])
+            chat_id = batch_data.get('chat_id')
+            user_name = batch_data.get('user_name', '')
+            bot_type = batch_data.get('bot_type', 'suggestions')
+            batch_id = batch_data.get('batch_id', '')
+            
+            if not items:
+                print(f"Batch {batch_id}: No items to process")
+                return False
+            
+            # Filter to items that have valid screenshots
+            valid_items = [
+                item for item in items 
+                if item.get('screenshot_path') and os.path.exists(item.get('screenshot_path', ''))
+            ]
+            
+            if not valid_items:
+                print(f"Batch {batch_id}: No valid screenshots found")
+                return False
+            
+            print(f"Processing batch {batch_id} with {len(valid_items)} valid items")
+            
+            # Format the multi-tweet message
+            tg_text = self.format_multi_tweet_message(batch_data)
+            
+            # Build media list - Telegram allows max 10 items per media group
+            media_list = []
+            for item in valid_items[:10]:  # Limit to 10 items (Telegram limit)
+                screenshot_path = item.get('screenshot_path')
+                if screenshot_path and os.path.exists(screenshot_path):
+                    media_list.append([screenshot_path, 'photo'])
+                
+                # Add videos for this tweet
+                for video_path in item.get('video_paths', []):
+                    if video_path and os.path.exists(video_path):
+                        media_list.append([video_path, 'video'])
+                        if len(media_list) >= 10:  # Respect Telegram limit
+                            break
+                
+                if len(media_list) >= 10:
+                    break
+            
+            if not media_list:
+                print(f"Batch {batch_id}: No media to send")
+                return False
+            
+            # Create media array
+            media_array = self.make_media_array(tg_text, media_list)
+            
+            # Send to the appropriate channel
+            sent_messages = self.message_queue.send_media_group_sync(
+                chat_id=self.CHAT_ID,
+                media=media_array
+            )
+            sent_message = sent_messages[0]
+            
+            # Use the first tweet_id for time options (or create a combined ID)
+            first_tweet_id = valid_items[0].get('tweet_id', batch_id)
+            
+            # Add time selection buttons
+            reply_markup, markup_text = self.make_time_options(first_tweet_id)
+            self.message_queue.send_message_sync(
+                chat_id=self.CHAT_ID,
+                text=markup_text,
+                reply_markup=reply_markup,
+                reply_to_message_id=sent_message.message_id
+            )
+            
+            # Log each tweet in the batch
+            for item in valid_items:
+                tweet_id = item.get('tweet_id', '')
+                
+                # Skip if already posted
+                if self.db.check_tweet_existence(tweet_id):
+                    continue
+                
+                # Add to tweets line (for scheduling)
+                tweet_line_args = {
+                    'tweet_id': tweet_id,
+                    'tweet_text': tg_text,
+                    'media_list': media_list
+                }
+                self.db.add_tweet_to_line(tweet_line_args)
+                
+                # Log the tweet
+                log_args = {
+                    'tweet_id': tweet_id,
+                    'tweet_text': tg_text,
+                    'user_name': user_name,
+                    'status': 'Success',
+                    'admin': bot_type == 'admin',
+                    'ocr_author': item.get('ocr_author', ''),
+                    'ocr_text': item.get('ocr_text', '')
+                }
+                self.db.tweet_log(log_args)
+            
+            # Notify the user
+            if chat_id:
+                notification_text = (
+                    f"✅ Your batch of {len(valid_items)} tweets has been processed!\n"
+                    f"📦 Batch ID: {batch_id}\n"
+                    f"📸 All screenshots combined into a single post."
+                )
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=notification_text
+                )
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error handling batch result: {e}")
             self.db.error_log(e)
             return False
 
@@ -728,10 +938,10 @@ class TelegramAdminBot(TelegramBot):
             return
 
         if admin_bool:
-            tweet_url = update.message.text.strip()
+            message_text = update.message.text.strip()
 
-            # Check if it's a valid tweet URL
-            if "twitter.com" in tweet_url or "x.com" in tweet_url:
+            # Check if it contains any valid tweet URLs
+            if "twitter.com" in message_text or "x.com" in message_text:
                 self.receive_tweet(update, user_name)
             else:
                 self.message_queue.send_message(
@@ -740,30 +950,111 @@ class TelegramAdminBot(TelegramBot):
                 )
 
     def receive_tweet(self, update, user_name):
-        """Process a received tweet URL."""
-        tweet_url = update.message.text.strip()
+        """
+        Process received tweet URLs (supports multiple URLs, one per line).
+        
+        Multiple URLs will be grouped as a batch and sent as a single media group.
+        """
+        message_text = update.message.text.strip()
         chat_id = str(update.message.chat_id)
 
-        # Add to queue with high priority (admin)
-        queue_id, result = self.twitter_api.add_to_queue(
-            tweet_url=tweet_url,
-            user_name=user_name,
-            chat_id=chat_id,
-            bot_type='admin'
-        )
-
-        if queue_id:
+        # Extract all tweet URLs from the message (one per line or space-separated)
+        tweet_urls = self._extract_tweet_urls(message_text)
+        
+        if not tweet_urls:
             self.message_queue.send_message(
                 chat_id=chat_id,
-                text=f"✅ Tweet added to queue!\n\n"
-                f"📍 Position: {result}\n"
-                f"⏳ You'll be notified when it's processed."
+                text='❌ No valid tweet URLs found in your message.'
             )
+            return
+        
+        # Generate batch ID if multiple URLs
+        batch_id = None
+        batch_total = len(tweet_urls)
+        if batch_total > 1:
+            import uuid
+            batch_id = str(uuid.uuid4())[:8]  # Short unique ID
+        
+        # Add each URL to queue
+        added_count = 0
+        failed_urls = []
+        first_position = None
+        
+        for tweet_url in tweet_urls:
+            queue_id, result = self.twitter_api.add_to_queue(
+                tweet_url=tweet_url,
+                user_name=user_name,
+                chat_id=chat_id,
+                bot_type='admin',
+                batch_id=batch_id,
+                batch_total=batch_total
+            )
+            
+            if queue_id:
+                added_count += 1
+                if first_position is None:
+                    first_position = result
+            else:
+                failed_urls.append((tweet_url, result))
+        
+        # Send feedback
+        if added_count > 0:
+            if batch_total == 1:
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Tweet added to queue!\n\n"
+                    f"📍 Position: {first_position}\n"
+                    f"⏳ You'll be notified when it's processed."
+                )
+            else:
+                msg = f"✅ {added_count}/{batch_total} tweets added to queue!\n\n"
+                msg += f"📍 Starting position: {first_position}\n"
+                msg += f"📦 Batch ID: {batch_id}\n"
+                msg += f"⏳ All tweets will be combined into a single post."
+                
+                if failed_urls:
+                    msg += f"\n\n⚠️ Failed to add {len(failed_urls)} tweet(s):"
+                    for url, reason in failed_urls[:3]:  # Show first 3
+                        short_url = url[:50] + '...' if len(url) > 50 else url
+                        msg += f"\n• {short_url}: {reason}"
+                
+                self.message_queue.send_message(chat_id=chat_id, text=msg)
         else:
-            self.message_queue.send_message(
-                chat_id=chat_id,
-                text=f"❌ Could not add tweet: {result}"
-            )
+            error_msg = "❌ Could not add any tweets:\n"
+            for url, reason in failed_urls[:5]:
+                short_url = url[:50] + '...' if len(url) > 50 else url
+                error_msg += f"\n• {short_url}: {reason}"
+            self.message_queue.send_message(chat_id=chat_id, text=error_msg)
+    
+    def _extract_tweet_urls(self, text):
+        """
+        Extract all valid tweet URLs from text.
+        
+        Args:
+            text: Message text potentially containing multiple URLs
+            
+        Returns:
+            List of valid tweet URLs
+        """
+        import re
+        
+        # Pattern for twitter.com and x.com URLs
+        pattern = r'https?://(?:mobile\.)?(?:twitter\.com|x\.com)/\w+/status/\d+'
+        
+        # Find all matches
+        urls = re.findall(pattern, text)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            # Normalize URL
+            normalized = self.twitter_api.normalize_tweet_url(url)
+            if normalized not in seen:
+                seen.add(normalized)
+                unique_urls.append(normalized)
+        
+        return unique_urls
 
     def time_counter(self):
         """Background thread for the Mahsa Amini time counter."""
@@ -1153,10 +1444,14 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 )
 
     def receive_tweet(self, update, context=None):
-        """Process a suggested tweet from a user."""
+        """
+        Process suggested tweet URLs (supports multiple URLs, one per line).
+        
+        Multiple URLs will be grouped as a batch and sent as a single media group.
+        """
         _, user_name = self.check_admin(update)
         chat_id = str(update.message.chat_id)
-        tweet_url = update.message.text.strip()
+        message_text = update.message.text.strip()
 
         # Reset state
         self.db.set_state(chat_id, self.STATE_IDLE)
@@ -1164,41 +1459,81 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Check rate limit (if enabled)
-        if self.user_tweet_limit > 0:
-            user_count = self.db.get_user_tweet_count_last_hour(user_name)
-            if user_count >= self.user_tweet_limit:
-                self.message_queue.send_message(
-                    chat_id=chat_id,
-                    text=f'⚠️ You have exceeded your hourly limit ({self.user_tweet_limit} tweets per hour).\n'
-                         f'Please try again later.',
-                    reply_markup=reply_markup
-                )
-                return
-
-        # Check if it's a valid tweet URL
-        if "twitter.com" not in tweet_url and "x.com" not in tweet_url:
+        # Extract all tweet URLs from the message
+        tweet_urls = self._extract_tweet_urls(message_text)
+        
+        if not tweet_urls:
             self.message_queue.send_message(
                 chat_id=chat_id,
-                text='❌ Please send a valid tweet URL (twitter.com or x.com)',
+                text='❌ No valid tweet URLs found. Please send valid twitter.com or x.com links.',
                 reply_markup=reply_markup
             )
             return
 
-        # Add to queue with low priority (suggestions)
-        queue_id, result = self.twitter_api.add_to_queue(
-            tweet_url=tweet_url,
-            user_name=user_name,
-            chat_id=chat_id,
-            bot_type='suggestions'
-        )
+        # Check rate limit (if enabled)
+        if self.user_tweet_limit > 0:
+            user_count = self.db.get_user_tweet_count_last_hour(user_name)
+            # Check if adding these tweets would exceed the limit
+            if user_count + len(tweet_urls) > self.user_tweet_limit:
+                remaining = self.user_tweet_limit - user_count
+                if remaining <= 0:
+                    self.message_queue.send_message(
+                        chat_id=chat_id,
+                        text=f'⚠️ You have exceeded your hourly limit ({self.user_tweet_limit} tweets per hour).\n'
+                             f'Please try again later.',
+                        reply_markup=reply_markup
+                    )
+                    return
+                else:
+                    # Truncate to remaining limit
+                    tweet_urls = tweet_urls[:remaining]
+                    self.message_queue.send_message(
+                        chat_id=chat_id,
+                        text=f'⚠️ Only processing {remaining} tweet(s) due to your hourly limit.',
+                        reply_markup=reply_markup
+                    )
 
-        if queue_id:
-            # Notify suggestions channel about the new suggestion (async)
-            self.message_queue.send_message(
-                    chat_id=self.CHAT_ID,
-                text=f"📥 New suggestion from @{user_name}"
+        # Generate batch ID if multiple URLs
+        batch_id = None
+        batch_total = len(tweet_urls)
+        if batch_total > 1:
+            import uuid
+            batch_id = str(uuid.uuid4())[:8]
+
+        # Add each URL to queue
+        added_count = 0
+        failed_urls = []
+        first_position = None
+        
+        for tweet_url in tweet_urls:
+            queue_id, result = self.twitter_api.add_to_queue(
+                tweet_url=tweet_url,
+                user_name=user_name,
+                chat_id=chat_id,
+                bot_type='suggestions',
+                batch_id=batch_id,
+                batch_total=batch_total
             )
+            
+            if queue_id:
+                added_count += 1
+                if first_position is None:
+                    first_position = result
+            else:
+                failed_urls.append((tweet_url, result))
+
+        if added_count > 0:
+            # Notify suggestions channel about the new suggestion(s)
+            if batch_total == 1:
+                self.message_queue.send_message(
+                    chat_id=self.CHAT_ID,
+                    text=f"📥 New suggestion from @{user_name}"
+                )
+            else:
+                self.message_queue.send_message(
+                    chat_id=self.CHAT_ID,
+                    text=f"📥 New batch of {added_count} suggestions from @{user_name} (batch: {batch_id})"
+                )
 
             # Show remaining submissions
             if self.user_tweet_limit > 0:
@@ -1207,20 +1542,73 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             else:
                 remaining_text = ""
 
-            self.message_queue.send_message(
-                chat_id=chat_id,
-                text=f"✅ Your tweet suggestion has been added to the queue!\n\n"
-                f"📍 Position: {result}\n"
-                f"⏳ You'll be notified when it's processed."
-                     f"{remaining_text}",
-                reply_markup=reply_markup
-            )
+            if batch_total == 1:
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Your tweet suggestion has been added to the queue!\n\n"
+                    f"📍 Position: {first_position}\n"
+                    f"⏳ You'll be notified when it's processed."
+                    f"{remaining_text}",
+                    reply_markup=reply_markup
+                )
+            else:
+                msg = f"✅ {added_count}/{batch_total} tweets added to queue!\n\n"
+                msg += f"📍 Starting position: {first_position}\n"
+                msg += f"📦 Batch ID: {batch_id}\n"
+                msg += f"⏳ All tweets will be combined into a single post."
+                msg += remaining_text
+                
+                if failed_urls:
+                    msg += f"\n\n⚠️ Failed to add {len(failed_urls)} tweet(s):"
+                    for url, reason in failed_urls[:3]:
+                        short_url = url[:40] + '...' if len(url) > 40 else url
+                        msg += f"\n• {short_url}: {reason}"
+                
+                self.message_queue.send_message(
+                    chat_id=chat_id,
+                    text=msg,
+                    reply_markup=reply_markup
+                )
         else:
+            error_msg = "❌ Could not add any tweets:\n"
+            for url, reason in failed_urls[:5]:
+                short_url = url[:40] + '...' if len(url) > 40 else url
+                error_msg += f"\n• {short_url}: {reason}"
             self.message_queue.send_message(
                 chat_id=chat_id,
-                text=f"❌ Could not add tweet: {result}",
+                text=error_msg,
                 reply_markup=reply_markup
             )
+    
+    def _extract_tweet_urls(self, text):
+        """
+        Extract all valid tweet URLs from text.
+        
+        Args:
+            text: Message text potentially containing multiple URLs
+            
+        Returns:
+            List of valid tweet URLs
+        """
+        import re
+        
+        # Pattern for twitter.com and x.com URLs
+        pattern = r'https?://(?:mobile\.)?(?:twitter\.com|x\.com)/\w+/status/\d+'
+        
+        # Find all matches
+        urls = re.findall(pattern, text)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            # Normalize URL
+            normalized = self.twitter_api.normalize_tweet_url(url)
+            if normalized not in seen:
+                seen.add(normalized)
+                unique_urls.append(normalized)
+        
+        return unique_urls
 
     def receive_feedback(self, update, context=None):
         """Process feedback message from user."""

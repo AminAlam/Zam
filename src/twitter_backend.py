@@ -347,6 +347,9 @@ class TwitterClient:
                 capture_time = dt.datetime.now()
                 capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
 
+                # Run OCR to extract text from the screenshot
+                ocr_author, ocr_text = self._extract_ocr_data(screenshot_path)
+
                 return {
                     'screenshot_path': screenshot_path,
                     'video_paths': video_paths,
@@ -355,7 +358,9 @@ class TwitterClient:
                     'capture_time': capture_time,
                     'capture_date_persian': capture_date_persian,
                     'tweet_url': normalized_url,
-                    'has_videos': len(video_paths) > 0
+                    'has_videos': len(video_paths) > 0,
+                    'ocr_author': ocr_author,
+                    'ocr_text': ocr_text
                 }
         except Exception as e:
             print(f"Error in capture_tweet: {e}")
@@ -367,6 +372,10 @@ class TwitterClient:
                 if result and os.path.exists(output_path):
                     capture_time = dt.datetime.now()
                     capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
+                    
+                    # Run OCR on fallback screenshot
+                    ocr_author, ocr_text = self._extract_ocr_data(output_path)
+                    
                     return {
                         'screenshot_path': output_path,
                         'video_paths': [],
@@ -375,13 +384,47 @@ class TwitterClient:
                         'capture_time': capture_time,
                         'capture_date_persian': capture_date_persian,
                         'tweet_url': normalized_url,
-                        'has_videos': False
+                        'has_videos': False,
+                        'ocr_author': ocr_author,
+                        'ocr_text': ocr_text
                     }
             except Exception as fallback_error:
                 print(f"Fallback capture also failed: {fallback_error}")
                 self.db.error_log(fallback_error)
 
         return None
+    
+    def _extract_ocr_data(self, screenshot_path):
+        """
+        Extract OCR data from a tweet screenshot.
+        
+        Args:
+            screenshot_path: Path to the screenshot image
+            
+        Returns:
+            tuple (ocr_author, ocr_text) - empty strings if OCR fails
+        """
+        try:
+            from ocr import extract_tweet_ocr
+            
+            print(f"[DEBUG] Running OCR on {screenshot_path}")
+            ocr_result = extract_tweet_ocr(screenshot_path)
+            
+            ocr_author = ocr_result.get('author', '')
+            ocr_text = ocr_result.get('text', '')
+            confidence = ocr_result.get('confidence', 0)
+            
+            print(f"[DEBUG] OCR result: author='{ocr_author}', text='{ocr_text[:50]}...', confidence={confidence:.2f}")
+            
+            return ocr_author, ocr_text
+            
+        except ImportError as e:
+            print(f"[WARNING] OCR module not available: {e}")
+            return '', ''
+        except Exception as e:
+            print(f"[WARNING] OCR extraction failed: {e}")
+            self.db.error_log(e)
+            return '', ''
 
     def start_queue_worker(self):
         """Start the background queue worker thread."""
@@ -427,7 +470,7 @@ class TwitterClient:
         Process a single item from the queue.
         
         Args:
-            queue_item: Tuple from database (id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time)
+            queue_item: Tuple from database (id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time, batch_id, batch_total)
         """
         # #region agent log
         print(f"[DEBUG] _process_queue_item called, queue_item={queue_item}")
@@ -438,8 +481,10 @@ class TwitterClient:
         user_name = queue_item[3]
         chat_id = queue_item[4]
         bot_type = queue_item[5]
+        batch_id = queue_item[8] if len(queue_item) > 8 else None
+        batch_total = queue_item[9] if len(queue_item) > 9 else 1
 
-        print(f"Processing queue item {queue_id}: {tweet_url}")
+        print(f"Processing queue item {queue_id}: {tweet_url} (batch: {batch_id}, {batch_total} items)")
 
         # Mark as processing
         self.db.mark_processing(queue_id)
@@ -454,30 +499,167 @@ class TwitterClient:
                 result['user_name'] = user_name
                 result['chat_id'] = chat_id
                 result['bot_type'] = bot_type
+                result['batch_id'] = batch_id
+                result['batch_total'] = batch_total
 
-                # Call the Telegram callback to send the tweet
-                if self.telegram_callback:
-                    success = self.telegram_callback(result)
-                    if success:
-                        self.db.mark_completed(queue_id)
-                        print(f"Queue item {queue_id} completed successfully")
+                # Store OCR data in the queue item for batch processing
+                ocr_author = result.get('ocr_author', '')
+                ocr_text = result.get('ocr_text', '')
+                if ocr_author or ocr_text:
+                    self.db.update_queue_ocr_data(queue_id, ocr_author, ocr_text)
+
+                # Mark as completed first
+                self.db.mark_completed(queue_id)
+                print(f"Queue item {queue_id} captured successfully")
+
+                # Handle batch vs single tweet processing
+                if batch_id and batch_total > 1:
+                    # This is part of a batch - check if batch is complete
+                    if self.db.is_batch_complete(batch_id):
+                        print(f"Batch {batch_id} is complete, triggering combined post")
+                        self._process_completed_batch(batch_id, user_name, chat_id, bot_type)
                     else:
-                        self.db.mark_failed(queue_id, "Failed to send to Telegram")
+                        print(f"Batch {batch_id} not yet complete, waiting for other items")
                 else:
-                    # No callback set, just mark as completed
-                    self.db.mark_completed(queue_id)
-                    print(f"Queue item {queue_id} captured (no callback)")
+                    # Single tweet - process immediately
+                    if self.telegram_callback:
+                        success = self.telegram_callback(result)
+                        if not success:
+                            print(f"Warning: Failed to send queue item {queue_id} to Telegram")
             else:
                 self.db.mark_failed(queue_id, "Failed to capture screenshot")
                 print(f"Queue item {queue_id} failed: Could not capture screenshot")
+                
+                # For batches, check if we should still try to post completed items
+                if batch_id and batch_total > 1:
+                    if self.db.is_batch_complete(batch_id):
+                        completed_items = self.db.get_batch_completed_items(batch_id)
+                        if completed_items:
+                            print(f"Batch {batch_id} complete (with some failures), posting {len(completed_items)} items")
+                            self._process_completed_batch(batch_id, user_name, chat_id, bot_type)
 
         except Exception as e:
             error_msg = str(e)
             self.db.mark_failed(queue_id, error_msg)
             print(f"Queue item {queue_id} failed with error: {error_msg}")
             self.db.error_log(e)
+            
+            # For batches, check if we should still try to post completed items
+            if batch_id and batch_total > 1:
+                if self.db.is_batch_complete(batch_id):
+                    completed_items = self.db.get_batch_completed_items(batch_id)
+                    if completed_items:
+                        self._process_completed_batch(batch_id, user_name, chat_id, bot_type)
 
-    def add_to_queue(self, tweet_url, user_name, chat_id, bot_type='suggestions'):
+    def _process_completed_batch(self, batch_id, user_name, chat_id, bot_type):
+        """
+        Process a completed batch of tweets, combining them into a single post.
+        
+        Args:
+            batch_id: The batch identifier
+            user_name: Username of the submitter
+            chat_id: Chat ID for notifications
+            bot_type: 'admin' or 'suggestions'
+        """
+        try:
+            # Get all completed items in the batch
+            batch_items = self.db.get_batch_completed_items(batch_id)
+            
+            if not batch_items:
+                print(f"No completed items found for batch {batch_id}")
+                return
+            
+            print(f"Processing completed batch {batch_id} with {len(batch_items)} items")
+            
+            # Build combined result for the callback
+            # Format: (id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time, batch_id, batch_total, status, ocr_author, ocr_text)
+            combined_result = {
+                'is_batch': True,
+                'batch_id': batch_id,
+                'user_name': user_name,
+                'chat_id': chat_id,
+                'bot_type': bot_type,
+                'items': []
+            }
+            
+            # Collect unique authors (from Twitter usernames in URLs)
+            unique_authors = set()
+            
+            for item in batch_items:
+                item_tweet_url = item[1]
+                item_tweet_id = item[2]
+                item_ocr_author = item[11] if len(item) > 11 else None
+                item_ocr_text = item[12] if len(item) > 12 else None
+                
+                # Parse username from URL
+                parsed = self.parse_tweet_url(item_tweet_url)
+                if parsed:
+                    unique_authors.add(parsed['username'])
+                
+                # Find the screenshot path for this tweet
+                screenshot_path = self._find_screenshot_for_tweet(item_tweet_id)
+                video_paths = self._find_videos_for_tweet(item_tweet_id)
+                
+                combined_result['items'].append({
+                    'tweet_id': item_tweet_id,
+                    'tweet_url': item_tweet_url,
+                    'username': parsed['username'] if parsed else 'unknown',
+                    'screenshot_path': screenshot_path,
+                    'video_paths': video_paths,
+                    'ocr_author': item_ocr_author,
+                    'ocr_text': item_ocr_text
+                })
+            
+            combined_result['unique_authors'] = list(unique_authors)
+            combined_result['capture_time'] = dt.datetime.now()
+            combined_result['capture_date_persian'] = JalaliDate(combined_result['capture_time']).strftime("%Y/%m/%d")
+            
+            # Call the Telegram callback with the combined result
+            if self.telegram_callback:
+                success = self.telegram_callback(combined_result)
+                if success:
+                    print(f"Batch {batch_id} posted successfully")
+                else:
+                    print(f"Warning: Failed to post batch {batch_id} to Telegram")
+            
+        except Exception as e:
+            print(f"Error processing batch {batch_id}: {e}")
+            self.db.error_log(e)
+    
+    def _find_screenshot_for_tweet(self, tweet_id):
+        """
+        Find the screenshot file for a given tweet ID.
+        
+        Args:
+            tweet_id: The tweet ID
+            
+        Returns:
+            Path to the screenshot file, or None if not found
+        """
+        import glob
+        pattern = os.path.join(self.screenshots_dir, f"{tweet_id}_*.png")
+        matches = glob.glob(pattern)
+        if matches:
+            # Return the most recent one
+            return max(matches, key=os.path.getctime)
+        return None
+    
+    def _find_videos_for_tweet(self, tweet_id):
+        """
+        Find video files for a given tweet ID.
+        
+        Args:
+            tweet_id: The tweet ID
+            
+        Returns:
+            List of paths to video files
+        """
+        import glob
+        pattern = os.path.join(self.videos_dir, f"{tweet_id}_video_*.mp4")
+        matches = glob.glob(pattern)
+        return sorted(matches, key=os.path.getctime)
+
+    def add_to_queue(self, tweet_url, user_name, chat_id, bot_type='suggestions', batch_id=None, batch_total=1):
         """
         Add a tweet to the processing queue.
         
@@ -486,6 +668,8 @@ class TwitterClient:
             user_name: Telegram username of the requester
             chat_id: Telegram chat ID to notify
             bot_type: 'admin' or 'suggestions' (determines priority)
+            batch_id: Optional batch identifier for grouping multiple tweets
+            batch_total: Total number of tweets in this batch
             
         Returns:
             tuple (queue_id, position) or (None, error_message)
@@ -509,14 +693,16 @@ class TwitterClient:
         # Determine priority based on bot type
         priority = 10 if bot_type == 'admin' else 1
 
-        # Add to queue
+        # Add to queue with batch info
         queue_id = self.db.add_to_queue(
             tweet_url=tweet_url,
             tweet_id=tweet_id,
             user_name=user_name,
             chat_id=chat_id,
             bot_type=bot_type,
-            priority=priority
+            priority=priority,
+            batch_id=batch_id,
+            batch_total=batch_total
         )
 
         if queue_id:

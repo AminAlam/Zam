@@ -25,6 +25,10 @@ selenium>=4.0.0
 webdriver-manager>=3.8.5
 Pillow>=9.3.0
 
+# OCR for text extraction (Persian/English)
+# Tesseract OCR - lightweight and reliable
+pytesseract>=0.3.10
+
 # Testing (dev dependencies)
 pytest>=7.0.0
 pytest-cov>=4.0.0

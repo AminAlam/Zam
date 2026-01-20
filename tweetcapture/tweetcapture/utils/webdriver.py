@@ -12,12 +12,16 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
     if scale < 1.0: scale = 1.0
     # Always add --no-sandbox for Docker compatibility
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    
     if gui is False:
         chrome_options.add_argument("--headless")
+        chrome_options.add_argument(f"--window-size={ceil(1024*scale)},{ceil(1024*scale)}")
     else:
         # GUI mode (for video capture in Xvfb)
-        # Kiosk mode removes all browser UI.
-        chrome_options.add_argument("--kiosk")
+        # Use start-fullscreen instead of kiosk (more compatible)
+        chrome_options.add_argument("--start-fullscreen")
         chrome_options.add_argument("--window-position=0,0")
         chrome_options.add_argument("--window-size=1280,1200")
         chrome_options.add_argument("--force-device-scale-factor=1")
@@ -26,17 +30,10 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
         chrome_options.add_argument("--disable-backgrounding-occluded-windows")
         chrome_options.add_argument("--disable-renderer-backgrounding")
         chrome_options.add_argument("--autoplay-policy=no-user-gesture-required")
-    chrome_options.add_argument("--disable-gpu")
+    
     chrome_options.add_argument("--test-type")
     chrome_options.add_argument("--disable-logging")
     chrome_options.add_argument('--ignore-certificate-errors')
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    # In GUI/Xvfb mode we set a fixed 1280x1200 above; in headless keep scale-based size.
-    if gui is False:
-        chrome_options.add_argument(f"--window-size={ceil(1024*scale)},{ceil(1024*scale)}")
-    else:
-        chrome_options.add_argument("--window-size=1280,1200")
-    chrome_options.add_argument("--remote-debugging-port=9222")
     chrome_options.add_argument("--incognito")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36")
 
