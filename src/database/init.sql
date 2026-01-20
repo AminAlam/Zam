@@ -9,7 +9,9 @@ CREATE TABLE IF NOT EXISTS tweets (
     user_name TEXT NOT NULL,
     status TEXT NOT NULL,
     time TIMESTAMP NOT NULL,
-    admin TEXT
+    admin TEXT,
+    ocr_author TEXT,           -- OCR-detected author name
+    ocr_text TEXT              -- OCR-detected tweet text
 );
 
 CREATE INDEX IF NOT EXISTS idx_tweets_tweet_id ON tweets(tweet_id);
@@ -58,12 +60,17 @@ CREATE TABLE IF NOT EXISTS tweet_queue (
     status TEXT DEFAULT 'pending',        -- 'pending', 'processing', 'completed', 'failed'
     added_time TIMESTAMP DEFAULT NOW(),
     processed_time TIMESTAMP,
-    error_message TEXT
+    error_message TEXT,
+    batch_id TEXT,                        -- Groups multiple tweets from same submission
+    batch_total INTEGER DEFAULT 1,        -- Total items in this batch
+    ocr_author TEXT,                      -- OCR-detected author name
+    ocr_text TEXT                         -- OCR-detected tweet text
 );
 
 -- Index for efficient queue processing: get pending items ordered by priority and time
 CREATE INDEX IF NOT EXISTS idx_queue_status_priority ON tweet_queue(status, priority DESC, added_time ASC);
 CREATE INDEX IF NOT EXISTS idx_queue_tweet_id ON tweet_queue(tweet_id);
+CREATE INDEX IF NOT EXISTS idx_queue_batch_id ON tweet_queue(batch_id);
 
 -- User feedback table: stores user messages/suggestions/bug reports
 CREATE TABLE IF NOT EXISTS user_feedback (
@@ -77,3 +84,41 @@ CREATE TABLE IF NOT EXISTS user_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON user_feedback(user_name);
 CREATE INDEX IF NOT EXISTS idx_feedback_category ON user_feedback(category);
+
+-- Migration: Add new columns to existing tables if they don't exist
+-- These ALTER statements will fail silently if columns already exist
+
+DO $$ 
+BEGIN
+    -- Add OCR columns to tweets table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweets' AND column_name='ocr_author') THEN
+        ALTER TABLE tweets ADD COLUMN ocr_author TEXT;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweets' AND column_name='ocr_text') THEN
+        ALTER TABLE tweets ADD COLUMN ocr_text TEXT;
+    END IF;
+    
+    -- Add batch columns to tweet_queue table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweet_queue' AND column_name='batch_id') THEN
+        ALTER TABLE tweet_queue ADD COLUMN batch_id TEXT;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweet_queue' AND column_name='batch_total') THEN
+        ALTER TABLE tweet_queue ADD COLUMN batch_total INTEGER DEFAULT 1;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweet_queue' AND column_name='ocr_author') THEN
+        ALTER TABLE tweet_queue ADD COLUMN ocr_author TEXT;
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweet_queue' AND column_name='ocr_text') THEN
+        ALTER TABLE tweet_queue ADD COLUMN ocr_text TEXT;
+    END IF;
+END $$;

@@ -79,20 +79,22 @@ class Database:
     # ==================== Tweet Logging ====================
 
     def tweet_log(self, args):
-        """Log a processed tweet."""
+        """Log a processed tweet with optional OCR data."""
         try:
             tweet_id = args['tweet_id']
             tweet_text = args['tweet_text']
             user_name = args['user_name']
             status = args['status']
             admin = args.get('admin', False)
+            ocr_author = args.get('ocr_author', None)
+            ocr_text = args.get('ocr_text', None)
             time_now = dt.datetime.now()
 
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    'INSERT INTO tweets (tweet_id, tweet_text, user_name, status, time, admin) VALUES (%s, %s, %s, %s, %s, %s)',
-                    (tweet_id, tweet_text, user_name, status, time_now, str(admin))
+                    'INSERT INTO tweets (tweet_id, tweet_text, user_name, status, time, admin, ocr_author, ocr_text) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                    (tweet_id, tweet_text, user_name, status, time_now, str(admin), ocr_author, ocr_text)
                 )
         except Exception as e:
             self.error_log(e)
@@ -127,6 +129,45 @@ class Database:
         except psycopg2.Error as e:
             self.error_log(e)
             return None
+
+    def get_ocr_text_by_tweet_id(self, tweet_id):
+        """
+        Get OCR-detected text for a tweet by its ID.
+        
+        Checks both tweets table and tweet_queue table.
+        
+        Args:
+            tweet_id: The tweet ID to look up
+            
+        Returns:
+            OCR text string or empty string if not found
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # First try the tweets table
+                cursor.execute(
+                    'SELECT ocr_text FROM tweets WHERE tweet_id = %s',
+                    (tweet_id,)
+                )
+                result = cursor.fetchone()
+                if result and result[0]:
+                    return result[0]
+                
+                # Fall back to tweet_queue table
+                cursor.execute(
+                    'SELECT ocr_text FROM tweet_queue WHERE tweet_id = %s ORDER BY id DESC LIMIT 1',
+                    (tweet_id,)
+                )
+                result = cursor.fetchone()
+                if result and result[0]:
+                    return result[0]
+                
+                return ''
+        except psycopg2.Error as e:
+            self.error_log(e)
+            return ''
 
     # ==================== Tweets Line (Scheduled Posts) ====================
 
@@ -280,17 +321,32 @@ class Database:
 
     # ==================== Tweet Queue (Priority-based Processing) ====================
 
-    def add_to_queue(self, tweet_url, tweet_id, user_name, chat_id, bot_type, priority=0):
-        """Add a tweet to the processing queue."""
+    def add_to_queue(self, tweet_url, tweet_id, user_name, chat_id, bot_type, priority=0, batch_id=None, batch_total=1):
+        """
+        Add a tweet to the processing queue.
+        
+        Args:
+            tweet_url: URL of the tweet
+            tweet_id: Tweet ID
+            user_name: Username of the submitter
+            chat_id: Chat ID for notifications
+            bot_type: 'admin' or 'suggestions'
+            priority: Queue priority (higher = processed first)
+            batch_id: Optional batch identifier for grouping multiple tweets
+            batch_total: Total number of tweets in this batch
+            
+        Returns:
+            Queue ID if successful, None otherwise
+        """
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     '''INSERT INTO tweet_queue 
-                       (tweet_url, tweet_id, user_name, chat_id, bot_type, priority, status, added_time) 
-                       VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW())
+                       (tweet_url, tweet_id, user_name, chat_id, bot_type, priority, status, added_time, batch_id, batch_total) 
+                       VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW(), %s, %s)
                        RETURNING id''',
-                    (tweet_url, tweet_id, user_name, chat_id, bot_type, priority)
+                    (tweet_url, tweet_id, user_name, chat_id, bot_type, priority, batch_id, batch_total)
                 )
                 queue_id = cursor.fetchone()[0]
                 return queue_id
@@ -304,7 +360,7 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time
+                    SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time, batch_id, batch_total
                     FROM tweet_queue 
                     WHERE status = 'pending'
                     ORDER BY priority DESC, added_time ASC
@@ -399,6 +455,137 @@ class Database:
                 cursor.execute(
                     "SELECT id, status FROM tweet_queue WHERE tweet_id = %s AND status IN ('pending', 'processing')",
                     (tweet_id,)
+                )
+                return cursor.fetchone()
+        except Exception as e:
+            self.error_log(e)
+            return None
+
+    # ==================== Batch Processing ====================
+
+    def get_batch_items(self, batch_id):
+        """
+        Get all queue items belonging to a batch.
+        
+        Args:
+            batch_id: The batch identifier
+            
+        Returns:
+            List of queue items in the batch
+        """
+        if not batch_id:
+            return []
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type, 
+                              priority, added_time, batch_id, batch_total, status,
+                              ocr_author, ocr_text
+                       FROM tweet_queue 
+                       WHERE batch_id = %s
+                       ORDER BY added_time ASC''',
+                    (batch_id,)
+                )
+                return cursor.fetchall()
+        except Exception as e:
+            self.error_log(e)
+            return []
+
+    def is_batch_complete(self, batch_id):
+        """
+        Check if all items in a batch have been processed (completed or failed).
+        
+        Args:
+            batch_id: The batch identifier
+            
+        Returns:
+            True if all items are done, False otherwise
+        """
+        if not batch_id:
+            return True  # Non-batch items are always "complete"
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                # Count items that are still pending or processing
+                cursor.execute(
+                    "SELECT COUNT(*) FROM tweet_queue WHERE batch_id = %s AND status IN ('pending', 'processing')",
+                    (batch_id,)
+                )
+                pending_count = cursor.fetchone()[0]
+                return pending_count == 0
+        except Exception as e:
+            self.error_log(e)
+            return False
+
+    def get_batch_completed_items(self, batch_id):
+        """
+        Get all successfully completed items in a batch.
+        
+        Args:
+            batch_id: The batch identifier
+            
+        Returns:
+            List of completed queue items with their data
+        """
+        if not batch_id:
+            return []
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type,
+                              priority, added_time, batch_id, batch_total, status,
+                              ocr_author, ocr_text
+                       FROM tweet_queue 
+                       WHERE batch_id = %s AND status = 'completed'
+                       ORDER BY added_time ASC''',
+                    (batch_id,)
+                )
+                return cursor.fetchall()
+        except Exception as e:
+            self.error_log(e)
+            return []
+
+    def update_queue_ocr_data(self, queue_id, ocr_author, ocr_text):
+        """
+        Update OCR data for a queue item.
+        
+        Args:
+            queue_id: The queue item ID
+            ocr_author: OCR-detected author name
+            ocr_text: OCR-detected tweet text
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE tweet_queue SET ocr_author = %s, ocr_text = %s WHERE id = %s',
+                    (ocr_author, ocr_text, queue_id)
+                )
+        except Exception as e:
+            self.error_log(e)
+
+    def get_queue_item(self, queue_id):
+        """
+        Get a specific queue item by ID.
+        
+        Args:
+            queue_id: The queue item ID
+            
+        Returns:
+            Queue item tuple or None
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type,
+                              priority, added_time, batch_id, batch_total, status,
+                              ocr_author, ocr_text
+                       FROM tweet_queue 
+                       WHERE id = %s''',
+                    (queue_id,)
                 )
                 return cursor.fetchone()
         except Exception as e:
