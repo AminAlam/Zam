@@ -330,25 +330,30 @@ class TwitterClient:
                 
                 screenshot_path = result.get('screenshot_path')
                 video_paths = result.get('video_paths', [])
+                tweet_text = result.get('tweet_text', '')
                 # #region agent log
-                print(f"[DEBUG] screenshot_with_videos returned: screenshot={screenshot_path}, videos={video_paths}")
+                print(f"[DEBUG] screenshot_with_videos returned: screenshot={screenshot_path}, videos={video_paths}, tweet_text={tweet_text[:50] if tweet_text else ''}...")
                 # #endregion
             else:
-                # Use traditional screenshot method
-                screenshot_path = self._run_async(
+                # Use traditional screenshot method (now returns dict)
+                result = self._run_async(
                     self.tweet_capture.screenshot(
                         url=normalized_url,
                         path=output_path
                     )
                 )
+                screenshot_path = result.get('screenshot_path')
+                tweet_text = result.get('tweet_text', '')
                 video_paths = []
 
             if screenshot_path and os.path.exists(screenshot_path):
                 capture_time = dt.datetime.now()
                 capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
 
-                # Run OCR to extract text from the screenshot
-                ocr_author, ocr_text = self._extract_ocr_data(screenshot_path)
+                # Use scraped tweet text (more accurate than OCR)
+                # #region agent log
+                print(f"[DEBUG] Using scraped tweet text: {len(tweet_text)} chars")
+                # #endregion
 
                 return {
                     'screenshot_path': screenshot_path,
@@ -359,8 +364,8 @@ class TwitterClient:
                     'capture_date_persian': capture_date_persian,
                     'tweet_url': normalized_url,
                     'has_videos': len(video_paths) > 0,
-                    'ocr_author': ocr_author,
-                    'ocr_text': ocr_text
+                    'ocr_author': '',  # Not needed with scraping
+                    'ocr_text': tweet_text  # Using scraped text instead of OCR
                 }
         except Exception as e:
             print(f"Error in capture_tweet: {e}")
