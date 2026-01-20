@@ -266,7 +266,7 @@ class TelegramBot:
             clean_ocr = html.escape(clean_ocr)
             tg_text += f"\n📝 {clean_ocr}\n"
         
-        tg_text += f"\n📢 {self.CHANNEL_NAME}"
+        tg_text += f"\n{self.CHANNEL_NAME}"
 
         return tg_text
     
@@ -325,7 +325,7 @@ class TelegramBot:
                 first_ocr = html.escape(first_ocr)
                 tg_text += f"\n📝 {first_ocr}\n"
         
-        tg_text += f"\n📢 {self.CHANNEL_NAME}"
+        tg_text += f"\n{self.CHANNEL_NAME}"
 
         return tg_text
 
