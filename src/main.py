@@ -22,6 +22,7 @@ from database import Database
 from twitter_backend import TwitterClient
 from telegram_backend import TelegramAdminBot, TelegramSuggestedTweetsBot
 from utils import load_credentials
+from migrations import run_migrations
 
 
 @click.command(help='Zam: A Telegram Bot for posting tweets in a Telegram channel')
@@ -70,6 +71,11 @@ def main(time_diff, mahsa_message, reference_snapshot, num_tweets_to_preserve, u
     
     # Initialize database
     db = Database()
+    
+    # Run database migrations to ensure schema is up to date
+    print("Running database migrations...")
+    run_migrations(db)
+    print("Database migrations complete.")
     
     # Parse time difference
     try:
