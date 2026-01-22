@@ -22,6 +22,9 @@ MIGRATIONS = [
         ALTER TABLE tweets ADD COLUMN IF NOT EXISTS ocr_author TEXT;
         ALTER TABLE tweets ADD COLUMN IF NOT EXISTS ocr_text TEXT;
     """),
+    (4, "Add quoted_tweet column to tweet_queue", """
+        ALTER TABLE tweet_queue ADD COLUMN IF NOT EXISTS quoted_tweet JSONB;
+    """),
 ]
 
 
