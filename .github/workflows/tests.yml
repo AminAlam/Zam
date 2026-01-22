@@ -39,7 +39,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov pytest-mock
+          pip install pytest pytest-cov pytest-mock beautifulsoup4
+          pip install -e tweetcapture/
 
       - name: Run unit tests
         run: |
@@ -51,7 +52,7 @@ jobs:
             --cov-report=term-missing \
             -m "not integration and not slow and not docker"
         env:
-          PYTHONPATH: ${{ github.workspace }}/src
+          PYTHONPATH: ${{ github.workspace }}
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
@@ -101,7 +102,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov pytest-mock
+          pip install pytest pytest-cov pytest-mock beautifulsoup4
+          pip install -e tweetcapture/
 
       - name: Initialize database
         run: |
@@ -114,7 +116,7 @@ jobs:
             -m "integration and not docker" \
             --tb=short
         env:
-          PYTHONPATH: ${{ github.workspace }}/src
+          PYTHONPATH: ${{ github.workspace }}
           DB_HOST: localhost
           DB_PORT: 5432
           DB_USER: zam
@@ -168,16 +170,16 @@ jobs:
           EOF
           
           # Start services
-          docker-compose up -d db
+          docker compose up -d db
           
           # Wait for database
           sleep 10
           
           # Check database is healthy
-          docker-compose exec -T db pg_isready -U zam
+          docker compose exec -T db pg_isready -U zam
           
           # Cleanup
-          docker-compose down -v
+          docker compose down -v
 
   all-tests-passed:
     needs: [unit-tests, integration-tests, docker-build]
