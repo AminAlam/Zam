@@ -317,16 +317,16 @@ class TelegramBot:
         parts = []
 
         # Header with linked username
-        parts.append(f'✍️ <a href="{tweet_url}">{self._escape_html(username)}</a>\n')
+        parts.append(f'🌐 <a href="{tweet_url}">{self._escape_html(username)}</a>\n')
 
         # Main tweet text - use expandable blockquote if text exceeds threshold
         if ocr_text:
             threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
             if threshold > 0 and len(ocr_text) > threshold:
                 # Use expandable blockquote for long text
-                parts.append(f'\n📝\n<blockquote expandable>{self._escape_html(ocr_text)}</blockquote>\n')
+                parts.append(f'\n\n<blockquote expandable>{self._escape_html(ocr_text)}</blockquote>\n')
             else:
-                parts.append(f'\n📝 {self._escape_html(ocr_text)}\n')
+                parts.append(f'\n {self._escape_html(ocr_text)}\n')
 
         # Quoted tweet as blockquote if available
         if quoted_tweet and quoted_tweet.get('text'):
@@ -401,7 +401,7 @@ class TelegramBot:
         entities = []
         current_len = 0
 
-        current_len = self._append_text(parts, current_len, "✍️ ")
+        current_len = self._append_text(parts, current_len, "🌐 ")
         current_len = self._append_text(parts, current_len, authors_text)
         current_len = self._append_text(parts, current_len, "\n")
 
@@ -412,7 +412,7 @@ class TelegramBot:
             if first_ocr:
                 if len(first_ocr) > TelegramConfig.OCR_TEXT_MAX_LENGTH:  # Leave room for quoted tweet
                     first_ocr = first_ocr[:TelegramConfig.OCR_TEXT_MAX_LENGTH] + '...'
-                current_len = self._append_text(parts, current_len, f"\n📝 {first_ocr}\n")
+                current_len = self._append_text(parts, current_len, f"\n {first_ocr}\n")
 
         # Add quoted tweet from the first item if available
         quoted_tweets = [item.get('quoted_tweet') for item in items if item.get('quoted_tweet')]
