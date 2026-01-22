@@ -1,18 +1,18 @@
-import os
-import re
-import sys
-import random
 import asyncio
+import datetime as dt
+import os
+import random
+import re
 import threading
 import time
-import datetime as dt
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+
 from persiantools.jdatetime import JalaliDate
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 # #region agent log
 print("[DEBUG] twitter_backend.py module loaded")
@@ -20,6 +20,8 @@ print("[DEBUG] twitter_backend.py module loaded")
 
 # Import tweetcapture (installed via pip install -e in Dockerfile)
 from tweetcapture import TweetCapture
+
+from .configs import TwitterConfig
 
 
 class TwitterClient:
@@ -42,9 +44,9 @@ class TwitterClient:
         """
         self.db = db
         self.telegram_callback = telegram_callback
-        self.screenshots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'screenshots')
-        self.videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'videos')
-        
+        self.screenshots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', TwitterConfig.SCREENSHOTS_DIR_NAME)
+        self.videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', TwitterConfig.VIDEOS_DIR_NAME)
+
         # Ensure directories exist
         if not os.path.exists(self.screenshots_dir):
             os.makedirs(self.screenshots_dir)
@@ -54,15 +56,15 @@ class TwitterClient:
         # Video capture settings
         self.enable_video_capture = enable_video_capture
         self.x_display = os.environ.get('DISPLAY', ':99')
-        
+
         # Initialize TweetCapture
         self.tweet_capture = TweetCapture(
-            mode=3,  # Show everything
-            night_mode=2,  # Dark mode (0=light, 1=dim, 2=dark)
-            overwrite=True,
-            radius=15
+            mode=TwitterConfig.TWEET_CAPTURE_MODE,  # Show everything
+            night_mode=TwitterConfig.TWEET_CAPTURE_NIGHT_MODE,  # Dark mode (0=light, 1=dim, 2=dark)
+            overwrite=TwitterConfig.TWEET_CAPTURE_OVERWRITE,
+            radius=TwitterConfig.TWEET_CAPTURE_RADIUS
         )
-        
+
         # Configure video capture if enabled
         if self.enable_video_capture:
             # Allow toggling audio capture via env (default on)
@@ -70,7 +72,7 @@ class TwitterClient:
             self.tweet_capture.enable_video_capture(
                 output_dir=self.videos_dir,
                 x_display=self.x_display,
-                max_duration=120,  # 2 minutes max
+                max_duration=TwitterConfig.VIDEO_MAX_DURATION,
                 with_audio=video_with_audio
             )
 
@@ -85,35 +87,24 @@ class TwitterClient:
     def _create_driver(self):
         """Create a configured Chrome WebDriver instance."""
         chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=600,1200')
-        chrome_options.add_argument('--hide-scrollbars')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--disable-popup-blocking')
-        # Enable proper font rendering for Persian/Arabic text
-        chrome_options.add_argument('--font-render-hinting=none')
-        chrome_options.add_argument('--disable-font-subpixel-positioning')
-        
+        for option in TwitterConfig.CHROME_OPTIONS:
+            chrome_options.add_argument(option)
+
         # Use system chromium binary
-        chrome_binary = os.environ.get('CHROME_BIN', '/usr/bin/chromium')
+        chrome_binary = os.environ.get('CHROME_BIN', TwitterConfig.DEFAULT_CHROME_BINARY)
         if os.path.exists(chrome_binary):
             chrome_options.binary_location = chrome_binary
-        
+
         # Use system chromedriver
-        chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
-        
+        chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', TwitterConfig.DEFAULT_CHROMEDRIVER_PATH)
+
         if os.path.exists(chromedriver_path):
             service = Service(executable_path=chromedriver_path)
             driver = webdriver.Chrome(service=service, options=chrome_options)
         else:
             # Fallback to default
             driver = webdriver.Chrome(options=chrome_options)
-        
+
         return driver
 
     def parse_tweet_url(self, tweet_url):
@@ -223,27 +214,27 @@ class TwitterClient:
         try:
             driver = self._create_driver()
             driver.get(tweet_url)
-            
+
             # Wait for the tweet to load
-            wait = WebDriverWait(driver, 15)
-            
+            wait = WebDriverWait(driver, TwitterConfig.WEBDRIVER_WAIT_TIMEOUT)
+
             # Try to find the tweet article element
             try:
                 # Wait for tweet content to be present
                 tweet_element = wait.until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, 'article[data-testid="tweet"]'))
                 )
-                
+
                 # Give it a moment to fully render
                 time.sleep(2)
-                
+
                 # Dismiss cookie banners and popups
                 self._dismiss_cookie_banner(driver)
                 time.sleep(0.5)
-                
+
                 # Try to take screenshot of just the tweet
                 tweet_element.screenshot(output_path)
-                
+
             except Exception as e:
                 print(f"Could not capture tweet element, taking full page screenshot: {e}")
                 # Fallback to full page screenshot
@@ -251,14 +242,14 @@ class TwitterClient:
                 self._dismiss_cookie_banner(driver)
                 time.sleep(0.5)
                 driver.save_screenshot(output_path)
-            
+
             return output_path
-            
+
         except Exception as e:
             print(f"Error capturing screenshot: {e}")
             self.db.error_log(e)
             return None
-            
+
         finally:
             if driver:
                 try:
@@ -281,7 +272,7 @@ class TwitterClient:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         return loop.run_until_complete(coro)
 
     def capture_tweet(self, tweet_url):
@@ -327,12 +318,17 @@ class TwitterClient:
                         video_output_dir=self.videos_dir
                     )
                 )
-                
+
                 screenshot_path = result.get('screenshot_path')
                 video_paths = result.get('video_paths', [])
                 tweet_text = result.get('tweet_text', '')
                 # #region agent log
-                print(f"[DEBUG] screenshot_with_videos returned: screenshot={screenshot_path}, videos={video_paths}, tweet_text={tweet_text[:50] if tweet_text else ''}...")
+                preview_text = ''
+                if isinstance(tweet_text, dict):
+                    preview_text = tweet_text.get('main_text', '')
+                elif isinstance(tweet_text, str):
+                    preview_text = tweet_text
+                print(f"[DEBUG] screenshot_with_videos returned: screenshot={screenshot_path}, videos={video_paths}, tweet_text={preview_text[:50] if preview_text else ''}...")
                 # #endregion
             else:
                 # Use traditional screenshot method (now returns dict)
@@ -343,7 +339,7 @@ class TwitterClient:
                     )
                 )
                 screenshot_path = result.get('screenshot_path')
-                tweet_text = result.get('tweet_text', '')
+                tweet_text = result.get('tweet_text', {'main_text': '', 'quoted_tweet': None})
                 video_paths = []
 
             if screenshot_path and os.path.exists(screenshot_path):
@@ -351,8 +347,12 @@ class TwitterClient:
                 capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
 
                 # Use scraped tweet text (more accurate than OCR)
+                # tweet_text is now a dict with 'main_text' and 'quoted_tweet'
+                main_text = tweet_text.get('main_text', '') if isinstance(tweet_text, dict) else tweet_text
+                quoted_tweet = tweet_text.get('quoted_tweet') if isinstance(tweet_text, dict) else None
+
                 # #region agent log
-                print(f"[DEBUG] Using scraped tweet text: {len(tweet_text)} chars")
+                print(f"[DEBUG] Using scraped tweet text: {len(main_text)} chars, quoted_tweet: {quoted_tweet is not None}")
                 # #endregion
 
                 return {
@@ -365,22 +365,23 @@ class TwitterClient:
                     'tweet_url': normalized_url,
                     'has_videos': len(video_paths) > 0,
                     'ocr_author': '',  # Not needed with scraping
-                    'ocr_text': tweet_text  # Using scraped text instead of OCR
+                    'ocr_text': main_text,  # Main tweet text
+                    'quoted_tweet': quoted_tweet  # Quoted tweet info (author, handle, text) or None
                 }
         except Exception as e:
             print(f"Error in capture_tweet: {e}")
             self.db.error_log(e)
-            
+
             # Fallback to direct Selenium capture if TweetCapture fails
             try:
                 result = self._capture_screenshot(normalized_url, output_path)
                 if result and os.path.exists(output_path):
                     capture_time = dt.datetime.now()
                     capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
-                    
+
                     # Run OCR on fallback screenshot
                     ocr_author, ocr_text = self._extract_ocr_data(output_path)
-                    
+
                     return {
                         'screenshot_path': output_path,
                         'video_paths': [],
@@ -398,7 +399,7 @@ class TwitterClient:
                 self.db.error_log(fallback_error)
 
         return None
-    
+
     def _extract_ocr_data(self, screenshot_path):
         """
         Extract OCR data from a tweet screenshot.
@@ -410,19 +411,19 @@ class TwitterClient:
             tuple (ocr_author, ocr_text) - empty strings if OCR fails
         """
         try:
-            from ocr import extract_tweet_ocr
-            
+            from .ocr import extract_tweet_ocr
+
             print(f"[DEBUG] Running OCR on {screenshot_path}")
             ocr_result = extract_tweet_ocr(screenshot_path)
-            
+
             ocr_author = ocr_result.get('author', '')
             ocr_text = ocr_result.get('text', '')
             confidence = ocr_result.get('confidence', 0)
-            
+
             print(f"[DEBUG] OCR result: author='{ocr_author}', text='{ocr_text[:50]}...', confidence={confidence:.2f}")
-            
+
             return ocr_author, ocr_text
-            
+
         except ImportError as e:
             print(f"[WARNING] OCR module not available: {e}")
             return '', ''
@@ -446,7 +447,7 @@ class TwitterClient:
         """Stop the background queue worker thread."""
         self._worker_running = False
         if self._worker_thread:
-            self._worker_thread.join(timeout=5)
+            self._worker_thread.join(timeout=TwitterConfig.QUEUE_WORKER_STOP_TIMEOUT)
         print("Queue worker stopped")
 
     def _queue_worker_loop(self):
@@ -463,12 +464,12 @@ class TwitterClient:
                     self._process_queue_item(queue_item)
                 else:
                     # No pending items, wait before checking again
-                    time.sleep(2)
+                    time.sleep(TwitterConfig.QUEUE_WORKER_POLL_INTERVAL)
 
             except Exception as e:
                 print(f"Queue worker error: {e}")
                 self.db.error_log(e)
-                time.sleep(5)  # Wait longer on error
+                time.sleep(TwitterConfig.QUEUE_WORKER_ERROR_WAIT)  # Wait longer on error
 
     def _process_queue_item(self, queue_item):
         """
@@ -510,8 +511,9 @@ class TwitterClient:
                 # Store OCR data in the queue item for batch processing
                 ocr_author = result.get('ocr_author', '')
                 ocr_text = result.get('ocr_text', '')
-                if ocr_author or ocr_text:
-                    self.db.update_queue_ocr_data(queue_id, ocr_author, ocr_text)
+                quoted_tweet = result.get('quoted_tweet')
+                if ocr_author or ocr_text or quoted_tweet:
+                    self.db.update_queue_ocr_data(queue_id, ocr_author, ocr_text, quoted_tweet)
 
                 # Mark as completed first
                 self.db.mark_completed(queue_id)
@@ -534,7 +536,7 @@ class TwitterClient:
             else:
                 self.db.mark_failed(queue_id, "Failed to capture screenshot")
                 print(f"Queue item {queue_id} failed: Could not capture screenshot")
-                
+
                 # For batches, check if we should still try to post completed items
                 if batch_id and batch_total > 1:
                     if self.db.is_batch_complete(batch_id):
@@ -548,7 +550,7 @@ class TwitterClient:
             self.db.mark_failed(queue_id, error_msg)
             print(f"Queue item {queue_id} failed with error: {error_msg}")
             self.db.error_log(e)
-            
+
             # For batches, check if we should still try to post completed items
             if batch_id and batch_total > 1:
                 if self.db.is_batch_complete(batch_id):
@@ -569,13 +571,13 @@ class TwitterClient:
         try:
             # Get all completed items in the batch
             batch_items = self.db.get_batch_completed_items(batch_id)
-            
+
             if not batch_items:
                 print(f"No completed items found for batch {batch_id}")
                 return
-            
+
             print(f"Processing completed batch {batch_id} with {len(batch_items)} items")
-            
+
             # Build combined result for the callback
             # Format: (id, tweet_url, tweet_id, user_name, chat_id, bot_type, priority, added_time, batch_id, batch_total, status, ocr_author, ocr_text)
             combined_result = {
@@ -586,25 +588,36 @@ class TwitterClient:
                 'bot_type': bot_type,
                 'items': []
             }
-            
+
             # Collect unique authors (from Twitter usernames in URLs)
             unique_authors = set()
-            
+
             for item in batch_items:
                 item_tweet_url = item[1]
                 item_tweet_id = item[2]
                 item_ocr_author = item[11] if len(item) > 11 else None
                 item_ocr_text = item[12] if len(item) > 12 else None
-                
+
                 # Parse username from URL
                 parsed = self.parse_tweet_url(item_tweet_url)
                 if parsed:
                     unique_authors.add(parsed['username'])
-                
+
                 # Find the screenshot path for this tweet
                 screenshot_path = self._find_screenshot_for_tweet(item_tweet_id)
                 video_paths = self._find_videos_for_tweet(item_tweet_id)
-                
+
+                # Get quoted_tweet from database if available
+                # Index 13 is quoted_tweet (stored as JSONB, returned as dict by psycopg2)
+                item_quoted_tweet = item[13] if len(item) > 13 else None
+                # If it's a string (shouldn't be with JSONB, but just in case), parse it
+                if isinstance(item_quoted_tweet, str):
+                    import json
+                    try:
+                        item_quoted_tweet = json.loads(item_quoted_tweet)
+                    except:
+                        item_quoted_tweet = None
+
                 combined_result['items'].append({
                     'tweet_id': item_tweet_id,
                     'tweet_url': item_tweet_url,
@@ -612,13 +625,14 @@ class TwitterClient:
                     'screenshot_path': screenshot_path,
                     'video_paths': video_paths,
                     'ocr_author': item_ocr_author,
-                    'ocr_text': item_ocr_text
+                    'ocr_text': item_ocr_text,
+                    'quoted_tweet': item_quoted_tweet
                 })
-            
+
             combined_result['unique_authors'] = list(unique_authors)
             combined_result['capture_time'] = dt.datetime.now()
             combined_result['capture_date_persian'] = JalaliDate(combined_result['capture_time']).strftime("%Y/%m/%d")
-            
+
             # Call the Telegram callback with the combined result
             if self.telegram_callback:
                 success = self.telegram_callback(combined_result)
@@ -626,11 +640,11 @@ class TwitterClient:
                     print(f"Batch {batch_id} posted successfully")
                 else:
                     print(f"Warning: Failed to post batch {batch_id} to Telegram")
-            
+
         except Exception as e:
             print(f"Error processing batch {batch_id}: {e}")
             self.db.error_log(e)
-    
+
     def _find_screenshot_for_tweet(self, tweet_id):
         """
         Find the screenshot file for a given tweet ID.
@@ -648,7 +662,7 @@ class TwitterClient:
             # Return the most recent one
             return max(matches, key=os.path.getctime)
         return None
-    
+
     def _find_videos_for_tweet(self, tweet_id):
         """
         Find video files for a given tweet ID.
@@ -686,17 +700,20 @@ class TwitterClient:
 
         tweet_id = parsed['tweet_id']
 
+        disable_duplicate_checks = os.environ.get("ZAM_DISABLE_DUPLICATE_TWEETS", "0") == "1"
+
         # Check if tweet already exists
-        if self.db.check_tweet_existence(tweet_id):
+        if not disable_duplicate_checks and self.db.check_tweet_existence(tweet_id):
             return None, "Tweet already posted"
 
         # Check if tweet is already in queue
-        existing = self.db.check_tweet_in_queue(tweet_id)
-        if existing:
-            return None, "Tweet is already in the queue"
+        if not disable_duplicate_checks:
+            existing = self.db.check_tweet_in_queue(tweet_id)
+            if existing:
+                return None, "Tweet is already in the queue"
 
         # Determine priority based on bot type
-        priority = 10 if bot_type == 'admin' else 1
+        priority = TwitterConfig.PRIORITY_ADMIN if bot_type == 'admin' else TwitterConfig.PRIORITY_SUGGESTIONS
 
         # Add to queue with batch info
         queue_id = self.db.add_to_queue(

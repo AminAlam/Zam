@@ -1,7 +1,9 @@
 import argparse
-from tweetcapture import TweetCapture
-from asyncio import run
 import traceback
+from asyncio import run
+
+from tweetcapture import TweetCapture
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Take a tweet screenshot.')
@@ -24,7 +26,7 @@ def parse_args():
     parser.add_argument('-hq', '--hide-quotes', dest='hide_tweet_quotes', action='store_true', help="Hide tweet quotes")
     parser.add_argument('-hlp', '--hide-link-previews', dest='hide_tweet_link_previews', action='store_true', help="Hide tweet link previews")
     parser.add_argument('-ha', '--hide-all', dest='hide_all_tweet_medias', action='store_true', help="Hide all tweet medias")
-    
+
     parser.add_argument('--overwrite', dest='overwrite', action='store_true', help="Overwrite output file if exists")
     parser.add_argument('-d', '--debug', dest='debug', action='store_true', help="Debug mode")
     parser.add_argument('--gui', dest='gui', action='store_true', help="GUI mode, open browser window")
@@ -40,9 +42,9 @@ def main():
     tweet = TweetCapture(args.mode, args.night_mode, show_parent_tweets=args.show_parent_tweets, parent_tweets_limit=args.show_parent_limit, show_mentions_count=args.show_mentions, overwrite=args.overwrite, radius=args.radius, scale=args.scale)
     tweet.set_lang(args.lang)
     tweet.set_wait_time(args.t)
-    if args.hide_all_tweet_medias is True: 
+    if args.hide_all_tweet_medias is True:
         tweet.hide_all_media()
-    else: 
+    else:
         tweet.hide_media(args.hide_tweet_link_previews, args.hide_tweet_photos, args.hide_tweet_videos, args.hide_tweet_gifs, args.hide_tweet_quotes)
     tweet.set_gui(args.gui)
     if len(args.chromedriver) > 0:

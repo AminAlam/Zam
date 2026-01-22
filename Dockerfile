@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Install uv for fast Python package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Install Chromium, FFmpeg, Xvfb, PulseAudio, and other dependencies
 RUN apt-get update && apt-get install -y \
     # Browser and driver
@@ -62,32 +65,35 @@ ENV PYTHONUNBUFFERED=1
 ENV WDM_LOCAL=1
 ENV WDM_SKIP_CACHE=true
 
+# Enable uv to use system Python
+ENV UV_SYSTEM_PYTHON=1
+
 WORKDIR /app
 
 # Create directories for screenshots and videos
 RUN mkdir -p /app/screenshots /app/videos
 
-# Copy and install requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy project files for uv
+COPY pyproject.toml uv.lock* README.md ./
 
-# Copy tweetcapture library and install it
+# Copy tweetcapture library
 COPY tweetcapture/ ./tweetcapture/
-RUN pip install --no-cache-dir ./tweetcapture && \
-    echo "=== Installed packages ===" && \
-    pip list | grep -i tweet && \
-    echo "=== tweetcapture folder contents ===" && \
-    ls -la ./tweetcapture/
 
-# Add tweetcapture to Python path as fallback
-ENV PYTHONPATH="/app/tweetcapture:${PYTHONPATH}"
+# Install dependencies using uv
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source code
 COPY src/ ./src/
 
+# Install the project itself
+RUN uv sync --frozen --no-dev
+
 # Create entrypoint script to start Xvfb and PulseAudio
 RUN echo '#!/bin/bash\n\
-# Start Xvfb (virtual framebuffer) - use 1280x1200 to accommodate tall tweets
+# Clean up stale X lock files from previous runs\n\
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true\n\
+\n\
+# Start Xvfb (virtual framebuffer) - use 1280x1200 to accommodate tall tweets\n\
 Xvfb :99 -screen 0 1280x1200x24 &\n\
 sleep 1\n\
 \n\
@@ -98,8 +104,8 @@ pactl load-module module-null-sink sink_name=zam sink_properties=device.descript
 pactl set-default-sink zam 2>/dev/null || true\n\
 pactl set-default-source zam.monitor 2>/dev/null || true\n\
 \n\
-# Run the main application\n\
-exec python src/main.py\n\
+# Run the main application using uv\n\
+exec uv run python -m src.main\n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 CMD ["/app/entrypoint.sh"]

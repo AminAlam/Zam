@@ -3,6 +3,7 @@ Pytest configuration and fixtures for Zam tests.
 """
 import os
 import sys
+
 import pytest
 
 # Add src to path for imports
