@@ -119,7 +119,7 @@ def format_telegram_message(tweet_data: dict) -> str:
     ocr_text = tweet_data.get('main_text', '')
     quoted_tweet = tweet_data.get('quoted_tweet')
 
-    tg_text = f"✍️ <a href='{tweet_url}'>{username}</a>\n"
+    tg_text = f"🌐 <a href='{tweet_url}'>{username}</a>\n"
     tg_text += f"📅 {capture_date_persian}\n"
 
     # Add main tweet text if available

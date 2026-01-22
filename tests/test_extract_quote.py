@@ -95,7 +95,7 @@ def format_telegram_message(username, tweet_url, capture_date, ocr_text, quoted_
     Format the extracted data as a Telegram message.
     Simulates format_tweet_message() from telegram_backend.py
     """
-    tg_text = f"✍️ <a href='{tweet_url}'>{username}</a>\n"
+    tg_text = f"🌐 <a href='{tweet_url}'>{username}</a>\n"
     tg_text += f"📅 {capture_date}\n"
 
     # Add main tweet text if available
