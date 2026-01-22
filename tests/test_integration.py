@@ -17,7 +17,7 @@ class TestEndToEndCapture:
     @pytest.fixture
     def twitter_client(self, tmp_path):
         """Create a TwitterClient instance for testing."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = False
@@ -137,15 +137,14 @@ class TestSystemHealth:
 
     def test_imports(self):
         """Test that all main modules can be imported."""
-        import twitter_backend
-        import utils
+        from src import twitter_backend, utils
 
         assert hasattr(twitter_backend, 'TwitterClient')
         assert hasattr(utils, 'load_credentials')
 
     def test_url_patterns(self, test_tweet_data):
         """Test URL pattern matching for various formats."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -168,7 +167,7 @@ class TestSystemHealth:
 
     def test_environment_variables_loaded(self, mock_env_vars):
         """Test that environment variables are properly loaded."""
-        from utils import load_credentials
+        from src.utils import load_credentials
 
         creds = load_credentials()
 

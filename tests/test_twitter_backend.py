@@ -13,7 +13,7 @@ class TestURLParsing:
 
     def test_parse_twitter_url(self):
         """Test parsing standard twitter.com URL."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -26,7 +26,7 @@ class TestURLParsing:
 
     def test_parse_x_url(self):
         """Test parsing x.com URL."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -39,7 +39,7 @@ class TestURLParsing:
 
     def test_parse_mobile_twitter_url(self):
         """Test parsing mobile.twitter.com URL."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -52,7 +52,7 @@ class TestURLParsing:
 
     def test_parse_url_with_query_params(self):
         """Test parsing URL with query parameters."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -65,7 +65,7 @@ class TestURLParsing:
 
     def test_parse_invalid_url(self):
         """Test parsing invalid URL returns None."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -75,7 +75,7 @@ class TestURLParsing:
 
     def test_parse_incomplete_url(self):
         """Test parsing incomplete Twitter URL returns None."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -89,7 +89,7 @@ class TestURLNormalization:
 
     def test_normalize_x_url_to_twitter(self):
         """Test that x.com URLs are normalized to twitter.com."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -100,7 +100,7 @@ class TestURLNormalization:
 
     def test_normalize_url_strips_query_params(self):
         """Test that query parameters are stripped during normalization."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -112,7 +112,7 @@ class TestURLNormalization:
 
     def test_normalize_mobile_url(self):
         """Test that mobile URLs are normalized."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -127,7 +127,7 @@ class TestQueueManagement:
 
     def test_add_to_queue_admin_priority(self):
         """Test that admin tweets get higher priority."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = False
@@ -151,7 +151,7 @@ class TestQueueManagement:
 
     def test_add_to_queue_suggestions_priority(self):
         """Test that suggestion tweets get lower priority."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = False
@@ -175,7 +175,7 @@ class TestQueueManagement:
 
     def test_add_to_queue_duplicate_tweet(self):
         """Test that duplicate tweets are rejected."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = True
@@ -193,8 +193,8 @@ class TestQueueManagement:
         assert "already posted" in error.lower()
 
     def test_add_to_queue_already_in_queue(self):
-        """Test that tweets already in queue are rejected."""
-        from twitter_backend import TwitterClient
+        """Test that tweets already in the queue are rejected."""
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = False
@@ -214,7 +214,7 @@ class TestQueueManagement:
 
     def test_add_to_queue_invalid_url(self):
         """Test that invalid URLs are rejected."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
@@ -236,7 +236,7 @@ class TestScreenshotCapture:
     @pytest.mark.integration
     def test_capture_creates_file(self, tmp_path):
         """Integration test: Verify screenshot capture creates a file."""
-        from twitter_backend import TwitterClient
+        from src.twitter_backend import TwitterClient
 
         mock_db = Mock()
         client = TwitterClient(mock_db)
