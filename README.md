@@ -4,6 +4,7 @@
   
 <br/>
 <img src="https://img.shields.io/badge/Python-14354C?style=for-the-badge&logo=python&logoColor=white" alt="built with Python3" />
+<img src="https://img.shields.io/badge/uv-DE5FE9?style=for-the-badge&logo=uv&logoColor=white" alt="uv" />
 <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL" />
 <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Telegram_logo.svg/800px-Telegram_logo.svg.png" style="width:3%" />
@@ -84,33 +85,51 @@ Zam is a Telegram bot that captures tweets as screenshots and allows admins to s
 
 3. **Build and start the containers**
    ```bash
-   docker-compose up --build -d
+   docker compose up --build -d
    ```
 
 4. **View logs**
    ```bash
-   docker-compose logs -f app
+   docker compose logs -f app
    ```
 
 5. **Stop the application**
    ```bash
-   docker-compose down
+   docker compose down
    ```
 
 ### Manual Installation (Development)
 
-1. **Clone the repository**
+This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable Python package management.
+
+1. **Install uv** (if not already installed)
+   ```bash
+   # macOS/Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   
+   # Or with Homebrew
+   brew install uv
+   
+   # Or with pip
+   pip install uv
+   ```
+
+2. **Clone the repository**
    ```bash
    git clone https://github.com/AminAlam/Zam.git
    cd Zam
    ```
 
-2. **Install dependencies**
+3. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   # Install all dependencies (including dev)
+   uv sync
+   
+   # Or without dev dependencies
+   uv sync --no-dev
    ```
 
-3. **Install Chromium** (required for tweet-capture)
+4. **Install Chromium** (required for tweet-capture)
    ```bash
    # Ubuntu/Debian
    sudo apt-get install chromium chromium-driver
@@ -119,23 +138,48 @@ Zam is a Telegram bot that captures tweets as screenshots and allows admins to s
    brew install chromium
    ```
 
-4. **Set up PostgreSQL database**
+5. **Set up PostgreSQL database**
    ```bash
    # Create database and run init.sql
    psql -U postgres -c "CREATE DATABASE zam_db;"
    psql -U postgres -d zam_db -f src/database/init.sql
    ```
 
-5. **Configure environment variables**
+6. **Configure environment variables**
    ```bash
    cp .env.example .env
    # Edit .env with your credentials
    ```
 
-6. **Run the application**
+7. **Run the application**
    ```bash
-   python src/main.py
+   uv run python -m src.main
    ```
+
+### Common uv Commands
+
+```bash
+# Sync dependencies from lockfile
+uv sync
+
+# Add a new dependency
+uv add <package>
+
+# Add a dev dependency  
+uv add --dev <package>
+
+# Update all dependencies
+uv lock --upgrade
+
+# Run any command in the virtual environment
+uv run <command>
+
+# Run tests
+uv run pytest
+
+# Run the linter
+uv run ruff check .
+```
 
 ----------
 ## Configuration
@@ -180,7 +224,7 @@ ADMIN_IDS=admin1,admin2,admin3    # Telegram usernames without @
 ### Command Line Options
 
 ```bash
-python src/main.py --help
+uv run python -m src.main --help
 
 Usage: main.py [OPTIONS]
 
@@ -203,7 +247,7 @@ Options:
 
 ```bash
 # Run with custom options
-docker-compose run app python src/main.py --time_diff 3:30 --user_tweet_limit 5
+docker compose run app uv run python -m src.main --time_diff 3:30 --user_tweet_limit 5
 ```
 
 ### Bot Commands
@@ -274,7 +318,7 @@ The "Auto timing" feature uses an intelligent algorithm to schedule tweets:
 ┌─────────────────────────────────────────────────────────┐
 │                    Docker Compose                        │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │              App Container                       │    │
+│  │         App Container (uv + Python 3.11)         │    │
 │  │  ┌─────────────┐  ┌─────────────────────────┐   │    │
 │  │  │ Admin Bot   │  │ Suggestions Bot         │   │    │
 │  │  └──────┬──────┘  └───────────┬─────────────┘   │    │
@@ -302,23 +346,48 @@ The "Auto timing" feature uses an intelligent algorithm to schedule tweets:
 └─────────────────────────────────────────────────────────┘
 ```
 
+### Project Structure
+
+```
+Zam/
+├── pyproject.toml          # Project configuration & dependencies
+├── uv.lock                 # Lockfile for reproducible builds
+├── .python-version         # Python version specification
+├── Dockerfile              # Docker build with uv
+├── docker compose.yml      # Container orchestration
+├── src/                    # Main application code
+│   ├── main.py             # Entry point
+│   ├── telegram_backend.py # Telegram bot handlers
+│   ├── twitter_backend.py  # Tweet capture & queue
+│   ├── utils.py            # Utility functions
+│   ├── ocr.py              # OCR text extraction
+│   ├── migrations.py       # Database migrations
+│   └── database/           # Database module
+│       ├── database.py     # Database operations
+│       └── init.sql        # Schema definitions
+├── tweetcapture/           # Local tweet screenshot package
+│   ├── pyproject.toml      # Package configuration
+│   └── tweetcapture/       # Package source
+└── tests/                  # Test suite
+```
+
 ----------
 ## Testing
 
 ### Running Tests Locally
 
 ```bash
-# Install test dependencies
-pip install -r requirements.txt
-
 # Run all unit tests
-pytest tests/ -m "not integration and not slow"
+uv run pytest tests/ -m "not integration and not slow"
 
 # Run with coverage
-pytest tests/ --cov=src --cov-report=html
+uv run pytest tests/ --cov=src --cov-report=html
 
 # Run integration tests (requires Chrome/Chromium)
-pytest tests/test_integration.py -m "integration"
+uv run pytest tests/test_integration.py -m "integration"
+
+# Run all tests
+uv run pytest
 ```
 
 ### Test Structure

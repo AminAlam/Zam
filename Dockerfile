@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Install uv for fast Python package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Install Chromium, FFmpeg, Xvfb, PulseAudio, and other dependencies
 RUN apt-get update && apt-get install -y \
     # Browser and driver
@@ -33,10 +36,7 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     # Video capture dependencies
     ffmpeg \
-    xvfb \
-    pulseaudio \
-    pulseaudio-utils \
-    # X11 libraries for screen capture
+    # X11 libraries for screen capture (client-side only, Xvfb runs in separate service)
     x11-utils \
     x11-xserver-utils \
     # Tesseract OCR and language packs
@@ -62,44 +62,53 @@ ENV PYTHONUNBUFFERED=1
 ENV WDM_LOCAL=1
 ENV WDM_SKIP_CACHE=true
 
+# Enable uv to use system Python
+ENV UV_SYSTEM_PYTHON=1
+
 WORKDIR /app
 
 # Create directories for screenshots and videos
 RUN mkdir -p /app/screenshots /app/videos
 
-# Copy and install requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy project files for uv
+COPY pyproject.toml README.md ./
 
-# Copy tweetcapture library and install it
+# Copy tweetcapture library
 COPY tweetcapture/ ./tweetcapture/
-RUN pip install --no-cache-dir ./tweetcapture && \
-    echo "=== Installed packages ===" && \
-    pip list | grep -i tweet && \
-    echo "=== tweetcapture folder contents ===" && \
-    ls -la ./tweetcapture/
 
-# Add tweetcapture to Python path as fallback
-ENV PYTHONPATH="/app/tweetcapture:${PYTHONPATH}"
+# Install dependencies using uv
+RUN uv sync --no-dev --no-install-project
 
 # Copy source code
 COPY src/ ./src/
 
-# Create entrypoint script to start Xvfb and PulseAudio
+# Install the project itself
+RUN uv sync --no-dev
+
+# Create simplified entrypoint script
+# Xvfb and PulseAudio are now running in a separate service
 RUN echo '#!/bin/bash\n\
-# Start Xvfb (virtual framebuffer) - use 1280x1200 to accommodate tall tweets
-Xvfb :99 -screen 0 1280x1200x24 &\n\
-sleep 1\n\
+# Clean up any stale lock files (defensive, should not be needed with separate service)\n\
+rm -f /tmp/.X99-lock 2>/dev/null || true\n\
 \n\
-# Start PulseAudio for audio capture (optional, may fail in some environments)\n\
-pulseaudio --start --exit-idle-time=-1 2>/dev/null || true\n\
-# Create a predictable sink/source for capturing browser audio (best-effort)\n\
-pactl load-module module-null-sink sink_name=zam sink_properties=device.description=zam 2>/dev/null || true\n\
-pactl set-default-sink zam 2>/dev/null || true\n\
-pactl set-default-source zam.monitor 2>/dev/null || true\n\
+# Wait for X display to be available (should already be ready via healthcheck)\n\
+echo "Waiting for X display :99..."\n\
+for i in {1..30}; do\n\
+  if [ -S /tmp/.X11-unix/X99 ]; then\n\
+    echo "X display :99 is ready"\n\
+    break\n\
+  fi\n\
+  echo "Waiting for X display... ($i/30)"\n\
+  sleep 1\n\
+done\n\
 \n\
-# Run the main application\n\
-exec python src/main.py\n\
+if [ ! -S /tmp/.X11-unix/X99 ]; then\n\
+  echo "ERROR: X display :99 not available after 30 seconds"\n\
+  exit 1\n\
+fi\n\
+\n\
+# Run the main application using uv\n\
+exec uv run python -m src.main\n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 CMD ["/app/entrypoint.sh"]

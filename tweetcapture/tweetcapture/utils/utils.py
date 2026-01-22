@@ -1,11 +1,13 @@
-from re import match
-import os
 import base64
+import os
+from re import match
+
 from PIL import Image, ImageDraw
+
 
 def is_valid_tweet_url(url):
     result = match(
-        "^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
+        r"^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
     if result is not None:
         return result[0]
     return False
@@ -13,12 +15,12 @@ def is_valid_tweet_url(url):
 
 def get_tweet_file_name(url):
     result = match(
-        "^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
+        r"^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
     return f"@{result[3]}_{result[5]}_tweetcapture.png"
 
 def get_tweet_base_url(url):
     result = match(
-        "^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
+        r"^https?:\/\/([A-Za-z0-9.]+)?(twitter\.com|x\.com)\/(?:#!\/)?(\w+)\/status(es)?\/(\d+)", url)
     return f"/{result[3].lower()}/status/{result[5].lower()}"
 
 
@@ -31,7 +33,7 @@ def get_chromedriver_default_path():
     else:
         return '/usr/local/bin/chromedriver'
 
-def image_base64(filename): 
+def image_base64(filename):
     if os.path.exists(filename):
         with open(filename, "rb") as image_file:
             encoded_string = "data:image/png;base64," + base64.b64encode(image_file.read()).decode('ascii')

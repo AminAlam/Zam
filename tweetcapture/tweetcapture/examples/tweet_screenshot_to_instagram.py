@@ -1,11 +1,12 @@
 # Take tweet screenshot and send instagram post or story
 
-from instagrapi import Client
-from instagrapi.types import StoryMention, StoryMedia, StoryLink, StoryHashtag, StorySticker
-from tweetcapture import TweetCapture
 import asyncio
-from PIL import Image
 import os
+
+from instagrapi import Client
+from PIL import Image
+
+from tweetcapture import TweetCapture
 
 IG_USERNAME = "instagram-username-here"
 IG_PASSWORD = "instagram-password-here"
@@ -37,7 +38,7 @@ async def main():
     tweet = TweetCapture()
     try:
         path = await tweet.screenshot("https://twitter.com/jack/status/20", "testig.png", mode=3, night_mode=2)
-    except Exception as error:
+    except Exception:
         traceback.print_exc()
         return
 

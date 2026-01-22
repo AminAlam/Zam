@@ -1,0 +1,22 @@
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y \
+    xvfb \
+    pulseaudio \
+    pulseaudio-utils \
+    procps \
+    dbus \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure D-Bus machine ID exists
+RUN dbus-uuidgen > /var/lib/dbus/machine-id || true
+
+# Pre-create directories for permissions
+RUN mkdir -p /tmp/.X11-unix /run/pulse && \
+    chmod 1777 /tmp/.X11-unix && \
+    chmod 777 /run/pulse
+
+COPY entrypoint-xvfb.sh /entrypoint-xvfb.sh
+RUN chmod +x /entrypoint-xvfb.sh
+
+ENTRYPOINT ["/entrypoint-xvfb.sh"]

@@ -1,9 +1,12 @@
-import os
-import json
 import datetime as dt
+import json
+import os
+from contextlib import contextmanager
+
 import psycopg2
 from psycopg2 import pool
-from contextlib import contextmanager
+
+from ..configs import DatabaseConfig
 
 
 class Database:
@@ -15,15 +18,15 @@ class Database:
         """Create a threaded connection pool for PostgreSQL."""
         try:
             db_pool = pool.ThreadedConnectionPool(
-                minconn=1,
-                maxconn=10,
-                host=os.getenv('DB_HOST', 'localhost'),
-                port=os.getenv('DB_PORT', '5432'),
-                user=os.getenv('DB_USER', 'zam'),
+                minconn=DatabaseConfig.POOL_MIN_CONNECTIONS,
+                maxconn=DatabaseConfig.POOL_MAX_CONNECTIONS,
+                host=os.getenv('DB_HOST', DatabaseConfig.DEFAULT_HOST),
+                port=os.getenv('DB_PORT', DatabaseConfig.DEFAULT_PORT),
+                user=os.getenv('DB_USER', DatabaseConfig.DEFAULT_USER),
                 password=os.getenv('DB_PASSWORD', ''),
-                database=os.getenv('DB_NAME', 'zam_db')
+                database=os.getenv('DB_NAME', DatabaseConfig.DEFAULT_DATABASE)
             )
-            print(f"Connected to PostgreSQL database at {os.getenv('DB_HOST', 'localhost')}")
+            print(f"Connected to PostgreSQL database at {os.getenv('DB_HOST', DatabaseConfig.DEFAULT_HOST)}")
             return db_pool
         except psycopg2.Error as e:
             print(f"Error creating connection pool: {e}")
@@ -145,7 +148,7 @@ class Database:
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # First try the tweets table
                 cursor.execute(
                     'SELECT ocr_text FROM tweets WHERE tweet_id = %s',
@@ -154,7 +157,7 @@ class Database:
                 result = cursor.fetchone()
                 if result and result[0]:
                     return result[0]
-                
+
                 # Fall back to tweet_queue table
                 cursor.execute(
                     'SELECT ocr_text FROM tweet_queue WHERE tweet_id = %s ORDER BY id DESC LIMIT 1',
@@ -163,7 +166,7 @@ class Database:
                 result = cursor.fetchone()
                 if result and result[0]:
                     return result[0]
-                
+
                 return ''
         except psycopg2.Error as e:
             self.error_log(e)
@@ -481,7 +484,7 @@ class Database:
                 cursor.execute(
                     '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type, 
                               priority, added_time, batch_id, batch_total, status,
-                              ocr_author, ocr_text
+                              ocr_author, ocr_text, quoted_tweet
                        FROM tweet_queue 
                        WHERE batch_id = %s
                        ORDER BY added_time ASC''',
@@ -536,7 +539,7 @@ class Database:
                 cursor.execute(
                     '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type,
                               priority, added_time, batch_id, batch_total, status,
-                              ocr_author, ocr_text
+                              ocr_author, ocr_text, quoted_tweet
                        FROM tweet_queue 
                        WHERE batch_id = %s AND status = 'completed'
                        ORDER BY added_time ASC''',
@@ -547,7 +550,7 @@ class Database:
             self.error_log(e)
             return []
 
-    def update_queue_ocr_data(self, queue_id, ocr_author, ocr_text):
+    def update_queue_ocr_data(self, queue_id, ocr_author, ocr_text, quoted_tweet=None):
         """
         Update OCR data for a queue item.
         
@@ -555,13 +558,16 @@ class Database:
             queue_id: The queue item ID
             ocr_author: OCR-detected author name
             ocr_text: OCR-detected tweet text
+            quoted_tweet: Optional dict with quoted tweet info (author, handle, text)
         """
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
+                # Convert quoted_tweet dict to JSON string for storage
+                quoted_tweet_json = json.dumps(quoted_tweet) if quoted_tweet else None
                 cursor.execute(
-                    'UPDATE tweet_queue SET ocr_author = %s, ocr_text = %s WHERE id = %s',
-                    (ocr_author, ocr_text, queue_id)
+                    'UPDATE tweet_queue SET ocr_author = %s, ocr_text = %s, quoted_tweet = %s WHERE id = %s',
+                    (ocr_author, ocr_text, quoted_tweet_json, queue_id)
                 )
         except Exception as e:
             self.error_log(e)
@@ -582,7 +588,7 @@ class Database:
                 cursor.execute(
                     '''SELECT id, tweet_url, tweet_id, user_name, chat_id, bot_type,
                               priority, added_time, batch_id, batch_total, status,
-                              ocr_author, ocr_text
+                              ocr_author, ocr_text, quoted_tweet
                        FROM tweet_queue 
                        WHERE id = %s''',
                     (queue_id,)
@@ -653,34 +659,36 @@ class Database:
             self.error_log(e)
             return 0
 
-    def get_hourly_distribution(self, hours_ahead=6):
+    def get_hourly_distribution(self, hours_ahead=None):
         """
         Get the scheduled tweet distribution for the next N hours.
         
         Returns:
             list of tuples: [(hour, count, max_slots), ...]
         """
+        if hours_ahead is None:
+            hours_ahead = DatabaseConfig.HOURLY_DISTRIBUTION_HOURS_AHEAD
         try:
             time_now = dt.datetime.now()
             distribution = []
-            
+
             with self.get_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 for i in range(hours_ahead):
                     target_hour = (time_now.hour + i) % 24
                     hour_start = time_now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=i)
                     hour_end = hour_start + dt.timedelta(hours=1)
-                    
+
                     cursor.execute(
                         'SELECT COUNT(*) FROM tweets_line WHERE sending_time >= %s AND sending_time < %s',
                         (hour_start, hour_end)
                     )
                     count = cursor.fetchone()[0]
-                    
-                    # Max slots = 6 per hour (every 10 minutes)
-                    distribution.append((target_hour, count, 6))
-            
+
+                    # Max slots per hour
+                    distribution.append((target_hour, count, DatabaseConfig.MAX_SLOTS_PER_HOUR))
+
             return distribution
         except Exception as e:
             self.error_log(e)

@@ -1,21 +1,17 @@
-import os
-import json
-import time
-import random
-import queue
-import threading
 import datetime as dt
-import html
-from telegram import Bot, InputMediaPhoto, InputMediaVideo, MessageEntity, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
-from telegram.error import NetworkError, TimedOut, RetryAfter
-from persiantools.jdatetime import JalaliDate
+import json
+import os
+import queue
+import random
+import threading
+import time
 
-from utils import covert_tweet_time_to_desired_time, form_time_counter_message, deleted_snapshots, telegraph
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, MessageEntity
+from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram.ext import CallbackQueryHandler, CommandHandler, Filters, MessageHandler, Updater
 
-
-# Default timeout for Telegram API calls (in seconds)
-DEFAULT_TIMEOUT = 30
+from .configs import TelegramConfig
+from .utils import covert_tweet_time_to_desired_time, deleted_snapshots, form_time_counter_message, telegraph
 
 
 class TelegramMessageQueue:
@@ -28,8 +24,8 @@ class TelegramMessageQueue:
     - Proper error handling and logging
     - Graceful shutdown support
     """
-    
-    def __init__(self, bot, db=None, rate_limit=0.5, max_retries=3):
+
+    def __init__(self, bot, db=None, rate_limit=None, max_retries=None):
         """
         Initialize the message queue.
         
@@ -41,12 +37,12 @@ class TelegramMessageQueue:
         """
         self.bot = bot
         self.db = db
-        self.rate_limit = rate_limit
-        self.max_retries = max_retries
+        self.rate_limit = rate_limit if rate_limit is not None else TelegramConfig.QUEUE_RATE_LIMIT
+        self.max_retries = max_retries if max_retries is not None else TelegramConfig.QUEUE_MAX_RETRIES
         self._queue = queue.Queue()
         self._running = False
         self._sender_thread = None
-    
+
     def start(self):
         """Start the sender thread."""
         if self._running:
@@ -55,101 +51,101 @@ class TelegramMessageQueue:
         self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
         self._sender_thread.start()
         print("Message queue sender started")
-    
+
     def stop(self):
         """Stop the sender thread."""
         self._running = False
         # Put a None to unblock the queue
         self._queue.put(None)
         if self._sender_thread:
-            self._sender_thread.join(timeout=5)
+            self._sender_thread.join(timeout=TelegramConfig.QUEUE_STOP_TIMEOUT)
         print("Message queue sender stopped")
-    
+
     def send_message(self, chat_id, text, **kwargs):
         """Queue a text message for sending."""
         self._queue.put(('message', chat_id, text, kwargs))
-    
+
     def send_media_group(self, chat_id, media, **kwargs):
         """Queue a media group for sending."""
         self._queue.put(('media_group', chat_id, media, kwargs))
-    
+
     def edit_message_text(self, chat_id, message_id, text, **kwargs):
         """Queue an edit message request."""
         self._queue.put(('edit_message', chat_id, message_id, text, kwargs))
-    
+
     def edit_message_media(self, chat_id, message_id, media, **kwargs):
         """Queue an edit media request."""
         self._queue.put(('edit_media', chat_id, message_id, media, kwargs))
-    
+
     def send_message_sync(self, chat_id, text, **kwargs):
         """
         Send a message synchronously (bypasses queue).
         Use only when you need the return value immediately.
         """
         return self._send_with_retry(
-            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
         )
-    
+
     def send_media_group_sync(self, chat_id, media, **kwargs):
         """
         Send a media group synchronously (bypasses queue).
         Use only when you need the return value immediately.
         """
         return self._send_with_retry(
-            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
         )
-    
+
     def _sender_loop(self):
         """Main sender loop - processes queued messages."""
         while self._running:
             try:
                 item = self._queue.get(timeout=1)
-                
+
                 if item is None:
                     continue
-                
+
                 msg_type = item[0]
-                
+
                 try:
                     if msg_type == 'message':
                         _, chat_id, text, kwargs = item
                         self._send_with_retry(
-                            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+                            lambda: self.bot.sendMessage(chat_id=chat_id, text=text, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
                         )
-                    
+
                     elif msg_type == 'media_group':
                         _, chat_id, media, kwargs = item
                         self._send_with_retry(
-                            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+                            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
                         )
-                    
+
                     elif msg_type == 'edit_message':
                         _, chat_id, message_id, text, kwargs = item
                         self._send_with_retry(
-                            lambda: self.bot.editMessageText(chat_id=chat_id, message_id=message_id, text=text, timeout=DEFAULT_TIMEOUT, **kwargs)
+                            lambda: self.bot.editMessageText(chat_id=chat_id, message_id=message_id, text=text, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
                         )
-                    
+
                     elif msg_type == 'edit_media':
                         _, chat_id, message_id, media, kwargs = item
                         self._send_with_retry(
-                            lambda: self.bot.editMessageMedia(chat_id=chat_id, message_id=message_id, media=media, timeout=DEFAULT_TIMEOUT, **kwargs)
+                            lambda: self.bot.editMessageMedia(chat_id=chat_id, message_id=message_id, media=media, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
                         )
-                    
+
                 except Exception as e:
                     print(f"Failed to send message after retries: {e}")
                     if self.db:
                         self.db.error_log(e)
-                
+
                 # Rate limiting
                 time.sleep(self.rate_limit)
-                
+
             except queue.Empty:
                 continue
             except Exception as e:
                 print(f"Message queue error: {e}")
                 if self.db:
                     self.db.error_log(e)
-    
+
     def _send_with_retry(self, send_func):
         """
         Execute a send function with exponential backoff retry.
@@ -164,7 +160,7 @@ class TelegramMessageQueue:
             The last exception if all retries fail
         """
         last_exception = None
-        
+
         for attempt in range(self.max_retries):
             try:
                 return send_func()
@@ -178,14 +174,15 @@ class TelegramMessageQueue:
                 if attempt < self.max_retries - 1:
                     # Exponential backoff with jitter
                     wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    print(e)
                     print(f"Network error, retry {attempt + 1}/{self.max_retries} in {wait_time:.1f}s...")
                     time.sleep(wait_time)
                 else:
                     raise
-            except Exception as e:
+            except Exception:
                 # Non-retryable error
                 raise
-        
+
         if last_exception:
             raise last_exception
 
@@ -238,38 +235,127 @@ class TelegramBot:
             media_array.append(media_tmp)
         return media_array
 
+    def _utf16_len(self, text: str) -> int:
+        return len((text or "").encode("utf-16-le")) // 2
+
+    def _append_text(self, parts: list, current_len: int, segment: str) -> int:
+        parts.append(segment)
+        return current_len + self._utf16_len(segment)
+
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters in text."""
+        if not text:
+            return ""
+        return (text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;"))
+
     def format_tweet_message(self, tweet_data):
         """
-        Format a captured tweet for display in Telegram.
+        Format a captured tweet for display in Telegram using HTML.
+        
+        Dynamically truncates text if the message exceeds Telegram's 1024 char caption limit.
         
         Args:
-            tweet_data: Dict with screenshot_path, username, tweet_id, capture_date_persian, tweet_url
+            tweet_data: Dict with screenshot_path, username, tweet_id, capture_date_persian, tweet_url,
+                       ocr_text (main tweet text), quoted_tweet (optional dict with author, handle, text)
             
         Returns:
-            Formatted message string
+            Tuple of (formatted_message_string, None)
+            - None entities means use parse_mode="HTML"
         """
         username = tweet_data['username']
         tweet_url = tweet_data['tweet_url']
         capture_date_persian = tweet_data['capture_date_persian']
-        ocr_text = tweet_data.get('ocr_text', '')
+        ocr_text = tweet_data.get('ocr_text', '').strip()
+        quoted_tweet = tweet_data.get('quoted_tweet')
+        quote_text = quoted_tweet.get('text', '').strip() if quoted_tweet else ''
 
-        tg_text = f"✍️ <a href='{tweet_url}'>{username}</a>\n"
-        tg_text += f"📅 {capture_date_persian}\n"
-        
-        # Add OCR-detected tweet text if available
-        if ocr_text and ocr_text.strip():
-            # Truncate if too long (Telegram caption limit is 1024 chars)
-            clean_ocr = ocr_text.strip()
-            if len(clean_ocr) > 500:
-                clean_ocr = clean_ocr[:500] + '...'
-            # Escape HTML special characters to prevent parsing errors
-            clean_ocr = html.escape(clean_ocr)
-            tg_text += f"\n📝 {clean_ocr}\n"
-        
-        tg_text += f"\n{self.CHANNEL_NAME}"
+        # First attempt: generate HTML with full text
+        message = self._build_html_message(username, tweet_url, capture_date_persian, ocr_text, quoted_tweet)
 
-        return tg_text
-    
+        print(f"[DEBUG] format_tweet_message: message_len={len(message)}, ocr_len={len(ocr_text)}, quote_len={len(quote_text)}")
+
+        # If within limit, return as-is
+        if len(message) <= TelegramConfig.MAX_CAPTION_LENGTH:
+            return message, None
+
+        # Calculate how much we need to trim
+        excess = len(message) - TelegramConfig.MAX_CAPTION_LENGTH + 3  # +3 for "..."
+
+        # Truncate text and regenerate
+        if quote_text and ocr_text:
+            # Both present: trim from the longer one first, prioritize main text
+            if len(quote_text) > len(ocr_text) // 2:
+                # Trim quote first
+                trim_from_quote = min(excess, max(0, len(quote_text) - TelegramConfig.MIN_TEXT_KEEP_LENGTH))  # Keep at least MIN_TEXT_KEEP_LENGTH chars
+                if trim_from_quote > 0:
+                    quote_text = quote_text[:len(quote_text) - trim_from_quote] + '...'
+                    excess -= trim_from_quote
+                    quoted_tweet = {**quoted_tweet, 'text': quote_text}
+            if excess > 0:
+                # Still need to trim, take from main text
+                ocr_text = ocr_text[:len(ocr_text) - excess] + '...'
+        elif ocr_text:
+            # Only main text, trim it
+            ocr_text = ocr_text[:len(ocr_text) - excess] + '...'
+        elif quote_text:
+            # Only quote text, trim it
+            quote_text = quote_text[:len(quote_text) - excess] + '...'
+            quoted_tweet = {**quoted_tweet, 'text': quote_text}
+
+        # Regenerate with truncated text
+        message = self._build_html_message(username, tweet_url, capture_date_persian, ocr_text, quoted_tweet)
+
+        print(f"[DEBUG] format_tweet_message after truncation: message_len={len(message)}")
+
+        return message, None
+
+    def _build_html_message(self, username, tweet_url, capture_date_persian, ocr_text, quoted_tweet):
+        """Build the HTML formatted message."""
+        parts = []
+
+        # Header with linked username
+        parts.append(f'🌐 <a href="{tweet_url}">{self._escape_html(username)}</a>\n')
+
+        # Main tweet text - use expandable blockquote if text exceeds threshold
+        if ocr_text:
+            threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
+            if threshold > 0 and len(ocr_text) > threshold:
+                # Use expandable blockquote for long text
+                parts.append(f'\n\n<blockquote expandable>{self._escape_html(ocr_text)}</blockquote>\n')
+            else:
+                parts.append(f'\n {self._escape_html(ocr_text)}\n')
+
+        # Quoted tweet as blockquote if available
+        if quoted_tweet and quoted_tweet.get('text'):
+            quote_text = quoted_tweet.get('text', '').strip()
+            quote_handle = quoted_tweet.get('handle', '').lstrip('@')
+            quote_url = quoted_tweet.get('url', '')
+
+            if quote_text:
+                # Format the quote attribution as a linked handle inside the blockquote
+                if quote_handle and quote_url:
+                    quote_attribution = f'<a href="{quote_url}">{self._escape_html(quote_handle)}</a>'
+                elif quote_handle:
+                    quote_attribution = f'{self._escape_html(quote_handle)}'
+                else:
+                    quote_attribution = ''
+
+                # Also use expandable blockquote for long quotes
+                threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
+                if threshold > 0 and len(quote_text) > threshold:
+                    parts.append(f'\n<blockquote expandable>💬 {quote_attribution}\n\n{self._escape_html(quote_text)}</blockquote>\n')
+                else:
+                    parts.append(f'\n<blockquote>💬 {quote_attribution}\n\n{self._escape_html(quote_text)}</blockquote>\n')
+
+        # Date at the end
+        parts.append(f'\n📅 {self._escape_html(capture_date_persian)}')
+        parts.append(f'\n{self._escape_html(self.CHANNEL_NAME)}')
+
+        return "".join(parts)
+
     def format_multi_tweet_message(self, batch_data):
         """
         Format a batch of captured tweets for display in Telegram.
@@ -285,23 +371,23 @@ class TelegramBot:
         unique_authors = batch_data.get('unique_authors', [])
         capture_date_persian = batch_data.get('capture_date_persian', '')
         items = batch_data.get('items', [])
-        
+
         # Build author links - each author linked to their tweet
         author_links = []
         author_urls = {}
-        
+
         # Map authors to their tweet URLs
         for item in items:
             username = item.get('username', '')
             tweet_url = item.get('tweet_url', '')
             if username and username not in author_urls:
                 author_urls[username] = tweet_url
-        
+
         # Create linked author names
         for author in unique_authors:
             url = author_urls.get(author, f"https://twitter.com/{author}")
             author_links.append(f"<a href='{url}'>{author}</a>")
-        
+
         # Format the author line
         if len(author_links) == 1:
             authors_text = author_links[0]
@@ -310,24 +396,74 @@ class TelegramBot:
         else:
             # Join all but last with comma, then add last with "and"
             authors_text = "، ".join(author_links[:-1]) + f" و {author_links[-1]}"
-        
-        tg_text = f"✍️ {authors_text}\n"
-        tg_text += f"📅 {capture_date_persian}\n"
-        
+
+        parts = []
+        entities = []
+        current_len = 0
+
+        current_len = self._append_text(parts, current_len, "🌐 ")
+        current_len = self._append_text(parts, current_len, authors_text)
+        current_len = self._append_text(parts, current_len, "\n")
+
         # Add OCR text from the first tweet if available
         ocr_texts = [item.get('ocr_text', '') for item in items if item.get('ocr_text')]
         if ocr_texts:
             first_ocr = ocr_texts[0].strip()
             if first_ocr:
-                if len(first_ocr) > 400:
-                    first_ocr = first_ocr[:400] + '...'
-                # Escape HTML special characters to prevent parsing errors
-                first_ocr = html.escape(first_ocr)
-                tg_text += f"\n📝 {first_ocr}\n"
-        
-        tg_text += f"\n{self.CHANNEL_NAME}"
+                if len(first_ocr) > TelegramConfig.OCR_TEXT_MAX_LENGTH:  # Leave room for quoted tweet
+                    first_ocr = first_ocr[:TelegramConfig.OCR_TEXT_MAX_LENGTH] + '...'
+                current_len = self._append_text(parts, current_len, f"\n {first_ocr}\n")
 
-        return tg_text
+        # Add quoted tweet from the first item if available
+        quoted_tweets = [item.get('quoted_tweet') for item in items if item.get('quoted_tweet')]
+        if quoted_tweets:
+            quoted_tweet = quoted_tweets[0]
+            quote_text = quoted_tweet.get('text', '').strip()
+            quote_handle = quoted_tweet.get('handle', '').lstrip('@')
+            quote_url = quoted_tweet.get('url', '')
+
+            if quote_text:
+                # Truncate quoted text if too long
+                if len(quote_text) > TelegramConfig.QUOTED_TEXT_MAX_LENGTH:
+                    quote_text = quote_text[:TelegramConfig.QUOTED_TEXT_MAX_LENGTH] + '...'
+
+                # Add handle as a link BEFORE the blockquote (format: 💬 handle\n<blockquote>text</blockquote>)
+                current_len = self._append_text(parts, current_len, "\n\n💬 ")
+                if quote_handle:
+                    handle_offset = current_len
+                    current_len = self._append_text(parts, current_len, quote_handle)
+                    if quote_url:
+                        entities.append(
+                            MessageEntity(
+                                type="text_link",
+                                offset=handle_offset,
+                                length=self._utf16_len(quote_handle),
+                                url=quote_url
+                            )
+                        )
+                current_len = self._append_text(parts, current_len, "\n")
+
+                # Quote text inside blockquote
+                quote_offset = current_len
+                current_len = self._append_text(parts, current_len, quote_text)
+
+                # Use expandable blockquote for long quotes
+                threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
+                blockquote_type = "expandable_blockquote" if threshold > 0 and len(quote_text) > threshold else "blockquote"
+                entities.append(
+                    MessageEntity(
+                        type=blockquote_type,
+                        offset=quote_offset,
+                        length=self._utf16_len(quote_text)
+                    )
+                )
+                current_len = self._append_text(parts, current_len, "\n")
+
+        # Date at the end
+        current_len = self._append_text(parts, current_len, f"\n📅 {capture_date_persian}")
+        current_len = self._append_text(parts, current_len, f"\n{self.CHANNEL_NAME}")
+
+        return "".join(parts), entities
 
     def on_captured_tweet(self, tweet_data):
         """
@@ -346,7 +482,7 @@ class TelegramBot:
             # Check if this is a batch result
             if tweet_data.get('is_batch', False):
                 return self._handle_batch_result(tweet_data)
-            
+
             # Single tweet processing
             tweet_id = tweet_data['tweet_id']
             screenshot_path = tweet_data['screenshot_path']
@@ -357,22 +493,25 @@ class TelegramBot:
             ocr_author = tweet_data.get('ocr_author', '')
             ocr_text = tweet_data.get('ocr_text', '')
 
+            disable_duplicate_checks = os.environ.get("ZAM_DISABLE_DUPLICATE_TWEETS", "0") == "1"
+
             # Check if already posted
-            if self.db.check_tweet_existence(tweet_id):
+            if not disable_duplicate_checks and self.db.check_tweet_existence(tweet_id):
                 return False
 
             # Format the message
-            tg_text = self.format_tweet_message(tweet_data)
+            tg_text, entities = self.format_tweet_message(tweet_data)
 
             # Create media array with the screenshot and any videos
             media_list = [[screenshot_path, 'photo']]
-            
+
             # Add videos to media list (they will be sent as a media group)
             for video_path in video_paths:
                 if video_path and os.path.exists(video_path):
                     media_list.append([video_path, 'video'])
-            
-            media_array = self.make_media_array(tg_text, media_list)
+
+            media_array = self.make_media_array(tg_text, media_list, entities=entities)
+            print(f"[DEBUG] on_captured_tweet: entities={entities}")
 
             # Send to the appropriate channel (sync because we need the message_id)
             sent_messages = self.message_queue.send_media_group_sync(
@@ -415,8 +554,8 @@ class TelegramBot:
                 if video_count > 0:
                     notification_text = f"✅ Your tweet has been processed!\n📸 Screenshot captured\n🎬 {video_count} video(s) captured"
                 else:
-                    notification_text = f"✅ Your tweet has been processed and sent to the admin channel!"
-                
+                    notification_text = "✅ Your tweet has been processed and sent to the admin channel!"
+
                 self.message_queue.send_message(
                     chat_id=chat_id,
                     text=notification_text
@@ -427,7 +566,7 @@ class TelegramBot:
         except Exception as e:
             self.db.error_log(e)
             return False
-    
+
     def _handle_batch_result(self, batch_data):
         """
         Handle a batch of captured tweets, sending them as a single media group.
@@ -439,65 +578,66 @@ class TelegramBot:
             True if successful, False otherwise
         """
         try:
+            disable_duplicate_checks = os.environ.get("ZAM_DISABLE_DUPLICATE_TWEETS", "0") == "1"
             items = batch_data.get('items', [])
             chat_id = batch_data.get('chat_id')
             user_name = batch_data.get('user_name', '')
             bot_type = batch_data.get('bot_type', 'suggestions')
             batch_id = batch_data.get('batch_id', '')
-            
+
             if not items:
                 print(f"Batch {batch_id}: No items to process")
                 return False
-            
+
             # Filter to items that have valid screenshots
             valid_items = [
-                item for item in items 
+                item for item in items
                 if item.get('screenshot_path') and os.path.exists(item.get('screenshot_path', ''))
             ]
-            
+
             if not valid_items:
                 print(f"Batch {batch_id}: No valid screenshots found")
                 return False
-            
+
             print(f"Processing batch {batch_id} with {len(valid_items)} valid items")
-            
+
             # Format the multi-tweet message
-            tg_text = self.format_multi_tweet_message(batch_data)
-            
+            tg_text, entities = self.format_multi_tweet_message(batch_data)
+
             # Build media list - Telegram allows max 10 items per media group
             media_list = []
             for item in valid_items[:10]:  # Limit to 10 items (Telegram limit)
                 screenshot_path = item.get('screenshot_path')
                 if screenshot_path and os.path.exists(screenshot_path):
                     media_list.append([screenshot_path, 'photo'])
-                
+
                 # Add videos for this tweet
                 for video_path in item.get('video_paths', []):
                     if video_path and os.path.exists(video_path):
                         media_list.append([video_path, 'video'])
                         if len(media_list) >= 10:  # Respect Telegram limit
                             break
-                
+
                 if len(media_list) >= 10:
                     break
-            
+
             if not media_list:
                 print(f"Batch {batch_id}: No media to send")
                 return False
-            
+
             # Create media array
-            media_array = self.make_media_array(tg_text, media_list)
-            
+            media_array = self.make_media_array(tg_text, media_list, entities=entities)
+
             # Send to the appropriate channel
             sent_messages = self.message_queue.send_media_group_sync(
                 chat_id=self.CHAT_ID,
                 media=media_array
             )
             sent_message = sent_messages[0]
-            
+
             # Use the first tweet_id for time options (or create a combined ID)
             first_tweet_id = valid_items[0].get('tweet_id', batch_id)
-            
+
             # Add time selection buttons
             reply_markup, markup_text = self.make_time_options(first_tweet_id)
             self.message_queue.send_message_sync(
@@ -506,15 +646,15 @@ class TelegramBot:
                 reply_markup=reply_markup,
                 reply_to_message_id=sent_message.message_id
             )
-            
+
             # Log each tweet in the batch
             for item in valid_items:
                 tweet_id = item.get('tweet_id', '')
-                
+
                 # Skip if already posted
-                if self.db.check_tweet_existence(tweet_id):
+                if not disable_duplicate_checks and self.db.check_tweet_existence(tweet_id):
                     continue
-                
+
                 # Add to tweets line (for scheduling)
                 tweet_line_args = {
                     'tweet_id': tweet_id,
@@ -522,7 +662,7 @@ class TelegramBot:
                     'media_list': media_list
                 }
                 self.db.add_tweet_to_line(tweet_line_args)
-                
+
                 # Log the tweet
                 log_args = {
                     'tweet_id': tweet_id,
@@ -534,7 +674,7 @@ class TelegramBot:
                     'ocr_text': item.get('ocr_text', '')
                 }
                 self.db.tweet_log(log_args)
-            
+
             # Notify the user
             if chat_id:
                 notification_text = (
@@ -546,9 +686,9 @@ class TelegramBot:
                     chat_id=chat_id,
                     text=notification_text
                 )
-            
+
             return True
-            
+
         except Exception as e:
             print(f"Error handling batch result: {e}")
             self.db.error_log(e)
@@ -607,7 +747,7 @@ class TelegramBot:
     def make_time_options(self, tweet_id):
         """Create time selection inline keyboard."""
         button_list = []
-        for time_option in range(0, 16 * 30, 30):
+        for time_option in range(0, TelegramConfig.TIME_OPTIONS_MAX_MINUTES, TelegramConfig.TIME_OPTIONS_INTERVAL):
             inline_key = InlineKeyboardButton(f"{time_option} min later", callback_data=f"TIME|{time_option}|{tweet_id}")
             button_list.append(inline_key)
         # Automatic option
@@ -617,16 +757,7 @@ class TelegramBot:
         markup_text = "Please select a time for sending this tweet."
         return reply_markup, markup_text
 
-    # Hour weights for auto-timing: Peak hours get more tweets
-    # Index = hour (0-23), Value = weight multiplier
-    HOUR_WEIGHTS = [
-        0.3, 0.3, 0.3, 0.3, 0.3, 0.3,  # 0-5 AM (quiet hours)
-        0.5, 0.7, 0.7, 0.7, 0.7, 0.8,  # 6-11 AM (morning)
-        0.8, 0.8, 0.8, 0.8, 0.8, 0.8,  # 12-5 PM (afternoon)
-        0.9, 0.9, 1.5, 1.5, 1.5, 1.3,  # 6-11 PM (evening/night peak)
-    ]
-
-    def _get_next_sending_time(self, desired_num_tweets_per_hour=6, min_gap_minutes=5):
+    def _get_next_sending_time(self, desired_num_tweets_per_hour=None, min_gap_minutes=None):
         """
         Calculate the next available sending time using weighted slot selection.
         
@@ -643,28 +774,32 @@ class TelegramBot:
         Returns:
             datetime: The next available sending time
         """
-        import random
-        
+
+        if desired_num_tweets_per_hour is None:
+            desired_num_tweets_per_hour = TelegramConfig.DEFAULT_TWEETS_PER_HOUR
+        if min_gap_minutes is None:
+            min_gap_minutes = TelegramConfig.MIN_GAP_MINUTES
+
         time_now = dt.datetime.now().replace(second=0, microsecond=0)
-        
+
         # Get all scheduled tweet times
         scheduled_times = self._get_scheduled_times()
-        
+
         # Try to find a slot for today and tomorrow
         for day_offset in range(2):
             base_date = time_now + dt.timedelta(days=day_offset)
-            
+
             # Generate candidate slots (every 5 minutes)
             candidate_slots = self._generate_candidate_slots(base_date, time_now, day_offset)
-            
+
             # Filter slots that respect minimum gap
             valid_slots = self._filter_by_gap(candidate_slots, scheduled_times, min_gap_minutes)
-            
+
             if valid_slots:
                 # Apply hour weights and select
                 selected_slot = self._weighted_random_select(valid_slots)
                 return selected_slot
-        
+
         # Fallback: return next available 5-minute mark
         fallback_time = time_now + dt.timedelta(minutes=min_gap_minutes)
         # Round up to next 5-minute mark
@@ -687,7 +822,7 @@ class TelegramBot:
     def _generate_candidate_slots(self, base_date, time_now, day_offset):
         """Generate candidate time slots for a given day."""
         slots = []
-        
+
         if day_offset == 0:
             # Today: start from current time + 2 minutes, rounded to next 5-min mark
             start_time = time_now + dt.timedelta(minutes=2)
@@ -701,7 +836,7 @@ class TelegramBot:
             # Tomorrow: start from 6 AM
             start_hour = 6
             start_minute = 0
-        
+
         # Generate slots from start time until end of day
         for hour in range(start_hour, 24):
             minute_start = start_minute if hour == start_hour else 0
@@ -710,14 +845,14 @@ class TelegramBot:
                 if day_offset > 0:
                     slot_time = slot_time.replace(day=base_date.day)
                 slots.append(slot_time)
-        
+
         return slots
 
     def _filter_by_gap(self, candidate_slots, scheduled_times, min_gap_minutes):
         """Filter slots that maintain minimum gap from scheduled tweets."""
         valid_slots = []
         min_gap = dt.timedelta(minutes=min_gap_minutes)
-        
+
         for slot in candidate_slots:
             is_valid = True
             for scheduled in scheduled_times:
@@ -726,27 +861,27 @@ class TelegramBot:
                     break
             if is_valid:
                 valid_slots.append(slot)
-        
+
         return valid_slots
 
     def _weighted_random_select(self, valid_slots):
         """Select a slot using hour-based weights."""
         import random
-        
+
         if not valid_slots:
             return None
-        
+
         # Calculate weights for each slot based on hour
         weights = []
         for slot in valid_slots:
-            hour_weight = self.HOUR_WEIGHTS[slot.hour]
+            hour_weight = TelegramConfig.HOUR_WEIGHTS[slot.hour]
             weights.append(hour_weight)
-        
+
         # Normalize weights
         total_weight = sum(weights)
         if total_weight == 0:
             return random.choice(valid_slots)
-        
+
         # Weighted random selection
         r = random.uniform(0, total_weight)
         cumulative = 0
@@ -754,7 +889,7 @@ class TelegramBot:
             cumulative += weight
             if r <= cumulative:
                 return slot
-        
+
         return valid_slots[-1]  # Fallback
 
     def get_user_name(self, update):
@@ -888,21 +1023,21 @@ class TelegramAdminBot(TelegramBot):
 
             # Build the stats message
             stats_msg = "📊 *Channel Statistics*\n\n"
-            
+
             # Queue status
             stats_msg += "📝 *Queue Status:*\n"
             stats_msg += f"   • Pending captures: {pending_count}\n"
             stats_msg += f"   • Currently processing: {processing_count}\n\n"
-            
+
             # Scheduled posts
             stats_msg += "📅 *Scheduled Posts:*\n"
             stats_msg += f"   • Awaiting posting: {scheduled_count}\n"
             stats_msg += f"   • Next post: {next_str}\n\n"
-            
+
             # Today's activity
             stats_msg += "📈 *Today's Activity:*\n"
             stats_msg += f"   • Posts sent: {posts_today}\n\n"
-            
+
             # Peak hours availability
             stats_msg += "⏰ *Next 6 Hours Availability:*\n"
             for hour, count, max_slots in hourly_dist:
@@ -960,26 +1095,26 @@ class TelegramAdminBot(TelegramBot):
 
         # Extract all tweet URLs from the message (one per line or space-separated)
         tweet_urls = self._extract_tweet_urls(message_text)
-        
+
         if not tweet_urls:
             self.message_queue.send_message(
                 chat_id=chat_id,
                 text='❌ No valid tweet URLs found in your message.'
             )
             return
-        
+
         # Generate batch ID if multiple URLs
         batch_id = None
         batch_total = len(tweet_urls)
         if batch_total > 1:
             import uuid
             batch_id = str(uuid.uuid4())[:8]  # Short unique ID
-        
+
         # Add each URL to queue
         added_count = 0
         failed_urls = []
         first_position = None
-        
+
         for tweet_url in tweet_urls:
             queue_id, result = self.twitter_api.add_to_queue(
                 tweet_url=tweet_url,
@@ -989,14 +1124,14 @@ class TelegramAdminBot(TelegramBot):
                 batch_id=batch_id,
                 batch_total=batch_total
             )
-            
+
             if queue_id:
                 added_count += 1
                 if first_position is None:
                     first_position = result
             else:
                 failed_urls.append((tweet_url, result))
-        
+
         # Send feedback
         if added_count > 0:
             if batch_total == 1:
@@ -1010,14 +1145,14 @@ class TelegramAdminBot(TelegramBot):
                 msg = f"✅ {added_count}/{batch_total} tweets added to queue!\n\n"
                 msg += f"📍 Starting position: {first_position}\n"
                 msg += f"📦 Batch ID: {batch_id}\n"
-                msg += f"⏳ All tweets will be combined into a single post."
-                
+                msg += "⏳ All tweets will be combined into a single post."
+
                 if failed_urls:
                     msg += f"\n\n⚠️ Failed to add {len(failed_urls)} tweet(s):"
                     for url, reason in failed_urls[:3]:  # Show first 3
                         short_url = url[:50] + '...' if len(url) > 50 else url
                         msg += f"\n• {short_url}: {reason}"
-                
+
                 self.message_queue.send_message(chat_id=chat_id, text=msg)
         else:
             error_msg = "❌ Could not add any tweets:\n"
@@ -1025,7 +1160,7 @@ class TelegramAdminBot(TelegramBot):
                 short_url = url[:50] + '...' if len(url) > 50 else url
                 error_msg += f"\n• {short_url}: {reason}"
             self.message_queue.send_message(chat_id=chat_id, text=error_msg)
-    
+
     def _extract_tweet_urls(self, text):
         """
         Extract all valid tweet URLs from text.
@@ -1037,13 +1172,13 @@ class TelegramAdminBot(TelegramBot):
             List of valid tweet URLs
         """
         import re
-        
+
         # Pattern for twitter.com and x.com URLs
         pattern = r'https?://(?:mobile\.)?(?:twitter\.com|x\.com)/\w+/status/\d+'
-        
+
         # Find all matches
         urls = re.findall(pattern, text)
-        
+
         # Remove duplicates while preserving order
         seen = set()
         unique_urls = []
@@ -1053,20 +1188,20 @@ class TelegramAdminBot(TelegramBot):
             if normalized not in seen:
                 seen.add(normalized)
                 unique_urls.append(normalized)
-        
+
         return unique_urls
 
     def time_counter(self):
         """Background thread for the Mahsa Amini time counter."""
         message_txt = "minutes have passed since when the brutal Islamic Regime took the life of our brave Mahsa, but our resolve remains unbroken. We will never forget, nor forgive the injustice that has been done 💔\n\nBut we do not mourn alone, for we stand united as a force to be reckoned with, a force that will fight with every breath and every beat of our hearts until justice is served ⚖️\n\nWe will not rest until we have reclaimed our rights and taken back what is rightfully ours. This is not just a cry for justice, but a call to arms - the sound of our REVOLUTION 🔥\n\n#MahsaAmini\n#WomanLifeFreedom\n\n@Tweets_SUT"
-        mahsa_death_time = dt.datetime(2022, 9, 16, 19, 0)
+        mahsa_death_time = TelegramConfig.MAHSA_DEATH_TIME
         message_id = self.db.get_time_counter_message_id()
 
         if message_id is None:
             time_now = dt.datetime.now()
             diff_time = time_now - mahsa_death_time
             message_caption = form_time_counter_message(diff_time, message_txt)
-            media_array = self.make_media_array(message_caption, [['https://revolution.aminalam.info/static/images/wlf_flag.png', 'photo']])
+            media_array = self.make_media_array(message_caption, [[TelegramConfig.MAHSA_FLAG_IMAGE_URL, 'photo']])
             try:
                 result = self.message_queue.send_media_group_sync(
                     chat_id=self.MAIN_CHANNEL_CHAT_ID,
@@ -1087,11 +1222,11 @@ class TelegramAdminBot(TelegramBot):
                 self.message_queue.edit_message_media(
                     chat_id=self.MAIN_CHANNEL_CHAT_ID,
                     message_id=message_id,
-                    media=InputMediaPhoto('https://revolution.aminalam.info/static/images/wlf_flag.png', message_caption)
+                    media=InputMediaPhoto(TelegramConfig.MAHSA_FLAG_IMAGE_URL, message_caption)
                 )
             except Exception as e:
                 print(f"Time counter error: {e}")
-            time.sleep(61)
+            time.sleep(TelegramConfig.TIME_COUNTER_UPDATE_INTERVAL)
 
     def check_for_tweet_in_line(self):
         """Background thread to check for scheduled tweets."""
@@ -1180,7 +1315,7 @@ class TelegramAdminBot(TelegramBot):
             except Exception as e:
                 self.db.error_log(e)
 
-            time.sleep(10)
+            time.sleep(TelegramConfig.TWEET_LINE_CHECK_INTERVAL)
 
 
 class TelegramSuggestedTweetsBot(TelegramBot):
@@ -1218,23 +1353,23 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         """Show the main interactive menu."""
         user_name = self.get_user_name(update)
         chat_id = str(update.message.chat_id)
-        
+
         # Reset user state
         self.db.set_state(chat_id, self.STATE_IDLE)
-        
+
         # Get remaining submissions
         if self.user_tweet_limit > 0:
             remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
             limit_text = f"\n\n📊 Submissions remaining: {remaining}/{total} this hour"
         else:
             limit_text = ""
-        
+
         welcome_text = (
             f"🎯 *Welcome to {self.CHANNEL_NAME} Suggestions Bot!*\n\n"
             f"What would you like to do?"
             f"{limit_text}"
         )
-        
+
         # Create menu buttons
         keyboard = [
             [
@@ -1246,7 +1381,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         self.message_queue.send_message(
             chat_id=chat_id,
             text=welcome_text,
@@ -1259,29 +1394,29 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         query = update.callback_query
         query_data = query.data.split('|')
         query_type = query_data[0]
-        
+
         user_name = query.from_user.username or str(query.from_user.id)
         chat_id = str(query.message.chat_id)
-        
+
         if query_type == 'MENU':
             action = query_data[1]
-            
+
             if action == 'submit_tweet':
                 self._handle_submit_tweet_menu(query, chat_id)
-            
+
             elif action == 'feedback':
                 self._show_feedback_categories(query)
-            
+
             elif action == 'remaining':
                 self._show_remaining_submissions(query, user_name)
-            
+
             elif action == 'back':
                 self._show_main_menu(query, user_name)
-        
+
         elif query_type == 'FEEDBACK':
             category = query_data[1]
             self._handle_feedback_category(query, chat_id, category)
-        
+
         # Also handle parent class callbacks (TIME, CANCEL, SENT)
         elif query_type in ('TIME', 'CANCEL', 'SENT'):
             self.callback_query_handler(update, context)
@@ -1289,10 +1424,10 @@ class TelegramSuggestedTweetsBot(TelegramBot):
     def _handle_submit_tweet_menu(self, query, chat_id):
         """Set state to await tweet URL."""
         self.db.set_state(chat_id, self.STATE_AWAITING_TWEET)
-        
+
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         query.edit_message_text(
             "📤 *Submit a Tweet*\n\n"
             "Please send me the tweet URL (twitter.com or x.com link).\n\n"
@@ -1316,7 +1451,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         query.edit_message_text(
             "💬 *Send Feedback*\n\n"
             "What type of message would you like to send?",
@@ -1328,7 +1463,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         """Set state to await feedback message."""
         self.db.set_state(chat_id, self.STATE_AWAITING_FEEDBACK)
         self.user_feedback_category[chat_id] = category
-        
+
         category_emojis = {
             'suggestion': '💡',
             'bug': '🐛',
@@ -1339,13 +1474,13 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             'bug': 'Bug Report',
             'question': 'Question'
         }
-        
+
         emoji = category_emojis.get(category, '💬')
         name = category_names.get(category, 'Feedback')
-        
+
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         query.edit_message_text(
             f"{emoji} *{name}*\n\n"
             f"Please type your message and send it.\n\n"
@@ -1358,12 +1493,12 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         """Show remaining submissions for the user."""
         if self.user_tweet_limit > 0:
             remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
-            
+
             # Create a visual progress bar
             used = total - remaining
             bar_filled = "█" * used
             bar_empty = "░" * remaining
-            
+
             text = (
                 f"📊 *Your Submission Status*\n\n"
                 f"Used: {used}/{total} this hour\n"
@@ -1373,38 +1508,38 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             )
         else:
             text = (
-                f"📊 *Your Submission Status*\n\n"
-                f"✅ *Unlimited* submissions allowed!\n\n"
-                f"_There is no hourly limit set for this bot._"
+                "📊 *Your Submission Status*\n\n"
+                "✅ *Unlimited* submissions allowed!\n\n"
+                "_There is no hourly limit set for this bot._"
             )
-        
+
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
     def _show_main_menu(self, query, user_name):
         """Return to main menu."""
         chat_id = str(query.message.chat_id)
         self.db.set_state(chat_id, self.STATE_IDLE)
-        
+
         # Clear any pending feedback category
         if chat_id in self.user_feedback_category:
             del self.user_feedback_category[chat_id]
-        
+
         # Get remaining submissions
         if self.user_tweet_limit > 0:
             remaining, total = self.db.get_user_remaining_submissions(user_name, self.user_tweet_limit)
             limit_text = f"\n\n📊 Submissions remaining: {remaining}/{total} this hour"
         else:
             limit_text = ""
-        
+
         welcome_text = (
             f"🎯 *Welcome to {self.CHANNEL_NAME} Suggestions Bot!*\n\n"
             f"What would you like to do?"
             f"{limit_text}"
         )
-        
+
         keyboard = [
             [
                 InlineKeyboardButton("📤 Submit Tweet", callback_data="MENU|submit_tweet"),
@@ -1415,14 +1550,14 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         query.edit_message_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
     def handle_text_message(self, update, context=None):
         """Route text messages based on user state (no thread spawning)."""
         chat_id = str(update.message.chat_id)
         state = self.db.get_state(chat_id)
-        
+
         if state == self.STATE_AWAITING_TWEET:
             self.receive_tweet(update, context)
         elif state == self.STATE_AWAITING_FEEDBACK:
@@ -1461,7 +1596,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
 
         # Extract all tweet URLs from the message
         tweet_urls = self._extract_tweet_urls(message_text)
-        
+
         if not tweet_urls:
             self.message_queue.send_message(
                 chat_id=chat_id,
@@ -1504,7 +1639,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         added_count = 0
         failed_urls = []
         first_position = None
-        
+
         for tweet_url in tweet_urls:
             queue_id, result = self.twitter_api.add_to_queue(
                 tweet_url=tweet_url,
@@ -1514,7 +1649,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 batch_id=batch_id,
                 batch_total=batch_total
             )
-            
+
             if queue_id:
                 added_count += 1
                 if first_position is None:
@@ -1555,15 +1690,15 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 msg = f"✅ {added_count}/{batch_total} tweets added to queue!\n\n"
                 msg += f"📍 Starting position: {first_position}\n"
                 msg += f"📦 Batch ID: {batch_id}\n"
-                msg += f"⏳ All tweets will be combined into a single post."
+                msg += "⏳ All tweets will be combined into a single post."
                 msg += remaining_text
-                
+
                 if failed_urls:
                     msg += f"\n\n⚠️ Failed to add {len(failed_urls)} tweet(s):"
                     for url, reason in failed_urls[:3]:
                         short_url = url[:40] + '...' if len(url) > 40 else url
                         msg += f"\n• {short_url}: {reason}"
-                
+
                 self.message_queue.send_message(
                     chat_id=chat_id,
                     text=msg,
@@ -1579,7 +1714,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 text=error_msg,
                 reply_markup=reply_markup
             )
-    
+
     def _extract_tweet_urls(self, text):
         """
         Extract all valid tweet URLs from text.
@@ -1591,13 +1726,13 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             List of valid tweet URLs
         """
         import re
-        
+
         # Pattern for twitter.com and x.com URLs
         pattern = r'https?://(?:mobile\.)?(?:twitter\.com|x\.com)/\w+/status/\d+'
-        
+
         # Find all matches
         urls = re.findall(pattern, text)
-        
+
         # Remove duplicates while preserving order
         seen = set()
         unique_urls = []
@@ -1607,7 +1742,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             if normalized not in seen:
                 seen.add(normalized)
                 unique_urls.append(normalized)
-        
+
         return unique_urls
 
     def receive_feedback(self, update, context=None):
@@ -1615,18 +1750,18 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         user_name = self.get_user_name(update) or 'Anonymous'
         chat_id = str(update.message.chat_id)
         message = update.message.text.strip()
-        
+
         # Get the category
         category = self.user_feedback_category.get(chat_id, 'general')
-        
+
         # Reset state and clear category
         self.db.set_state(chat_id, self.STATE_IDLE)
         if chat_id in self.user_feedback_category:
             del self.user_feedback_category[chat_id]
-        
+
         # Save to database
         self.db.add_user_feedback(user_name, chat_id, category, message)
-        
+
         # Format category for display
         category_display = {
             'suggestion': '💡 SUGGESTION',
@@ -1634,7 +1769,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             'question': '❓ QUESTION'
         }
         category_text = category_display.get(category, '💬 FEEDBACK')
-        
+
         # Forward to admin channel (async)
         admin_message = (
             f"{category_text} from @{user_name}:\n\n"
@@ -1644,11 +1779,11 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             chat_id=self.CHAT_ID,
             text=admin_message
         )
-        
+
         # Confirm to user
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         self.message_queue.send_message(
             chat_id=chat_id,
             text="✅ Thank you for your feedback!\n\n"
