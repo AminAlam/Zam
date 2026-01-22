@@ -8,10 +8,10 @@ from unittest.mock import Mock, patch
 class TestDatabaseConnection:
     """Tests for database connection functionality."""
 
-    @patch('database.database.pool.ThreadedConnectionPool')
+    @patch('src.database.database.pool.ThreadedConnectionPool')
     def test_database_initialization(self, mock_pool, mock_env_vars):
         """Test database initialization creates connection pool."""
-        from database.database import Database
+        from src.database.database import Database
 
         mock_pool_instance = Mock()
         mock_pool.return_value = mock_pool_instance
@@ -33,8 +33,8 @@ class TestQueueOperations:
 
     def test_add_to_queue(self):
         """Test adding a tweet to the queue."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -61,8 +61,8 @@ class TestQueueOperations:
 
     def test_get_next_pending(self):
         """Test getting next pending item from queue."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -86,8 +86,8 @@ class TestQueueOperations:
 
     def test_mark_completed(self):
         """Test marking a queue item as completed."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -108,8 +108,8 @@ class TestQueueOperations:
 
     def test_mark_failed(self):
         """Test marking a queue item as failed."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -130,8 +130,8 @@ class TestQueueOperations:
 
     def test_get_queue_position(self):
         """Test getting queue position for an item."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -155,8 +155,8 @@ class TestTweetOperations:
 
     def test_check_tweet_existence_exists(self):
         """Test checking if a tweet exists (positive case)."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -175,8 +175,8 @@ class TestTweetOperations:
 
     def test_check_tweet_existence_not_exists(self):
         """Test checking if a tweet exists (negative case)."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -195,8 +195,8 @@ class TestTweetOperations:
 
     def test_tweet_log(self):
         """Test logging a processed tweet."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -225,8 +225,8 @@ class TestErrorLogging:
 
     def test_error_log(self):
         """Test logging an error."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance
@@ -249,8 +249,8 @@ class TestRateLimiting:
 
     def test_get_user_tweet_count_last_hour(self):
         """Test getting user's tweet count in last hour."""
-        with patch('database.database.pool.ThreadedConnectionPool') as mock_pool:
-            from database.database import Database
+        with patch('src.database.database.pool.ThreadedConnectionPool') as mock_pool:
+            from src.database.database import Database
 
             mock_pool_instance = Mock()
             mock_pool.return_value = mock_pool_instance

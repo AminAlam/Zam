@@ -6,8 +6,11 @@ import sys
 
 import pytest
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add project root to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Ensure we don't accidentally import from src/ directly
+if os.path.join(os.path.dirname(__file__), '..', 'src') in sys.path:
+    sys.path.remove(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 # Test tweet URL - Jack Dorsey's first tweet
 TEST_TWEET_URL = "https://x.com/jack/status/20"
