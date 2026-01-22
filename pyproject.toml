@@ -1,0 +1,93 @@
+[project]
+name = "zam"
+version = "1.0.0"
+description = "Telegram bot for capturing and posting tweets"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Amin Alam" }
+]
+keywords = ["telegram", "twitter", "bot", "tweet", "screenshot"]
+
+dependencies = [
+    # Telegram Bot
+    "python-telegram-bot==13.15",
+    # Environment and Configuration
+    "python-dotenv",
+    # Database
+    "psycopg2-binary",
+    # HTTP Requests
+    "requests>=2.20.0",
+    "aiohttp>=3.4.4",
+    # Persian Date/Time
+    "persiantools",
+    # CLI
+    "click",
+    # Telegraph API
+    "telegraph",
+    # Tweet Screenshot and Video Capture
+    "selenium>=4.0.0",
+    "webdriver-manager>=3.8.5",
+    "Pillow>=9.3.0",
+    "packaging",
+    # OCR for text extraction (Persian/English)
+    "pytesseract>=0.3.10",
+    # Local tweetcapture package
+    "tweetcapture",
+    "beautifulsoup4>=4.14.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "ruff",
+]
+
+[project.scripts]
+zam = "src.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "ruff",
+]
+
+[tool.uv.sources]
+# Include local tweetcapture package
+tweetcapture = { path = "tweetcapture", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "docker: marks tests that require Docker",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]  # Line too long - handled by formatter

@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS tweet_queue (
     batch_id TEXT,                        -- Groups multiple tweets from same submission
     batch_total INTEGER DEFAULT 1,        -- Total items in this batch
     ocr_author TEXT,                      -- OCR-detected author name
-    ocr_text TEXT                         -- OCR-detected tweet text
+    ocr_text TEXT,                        -- OCR-detected tweet text
+    quoted_tweet JSONB                    -- Quoted tweet info (author, handle, text)
 );
 
 -- Index for efficient queue processing: get pending items ordered by priority and time
@@ -120,5 +121,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                    WHERE table_name='tweet_queue' AND column_name='ocr_text') THEN
         ALTER TABLE tweet_queue ADD COLUMN ocr_text TEXT;
+    END IF;
+    
+    -- Add quoted_tweet column to tweet_queue table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                   WHERE table_name='tweet_queue' AND column_name='quoted_tweet') THEN
+        ALTER TABLE tweet_queue ADD COLUMN quoted_tweet JSONB;
     END IF;
 END $$;

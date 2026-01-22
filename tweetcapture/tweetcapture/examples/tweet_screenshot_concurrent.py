@@ -1,5 +1,6 @@
-from tweetcapture import TweetCapture
 import asyncio
+
+from tweetcapture import TweetCapture
 
 TweetURLs = [
     "https://twitter.com/jack/status/20",

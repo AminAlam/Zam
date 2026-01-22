@@ -1,5 +1,7 @@
-from tweetcapture import TweetCapture
 import asyncio
+
+from tweetcapture import TweetCapture
+
 tweet = TweetCapture()
 asyncio.run(tweet.screenshot(
     "https://twitter.com/jack/status/20", "mode3.png", mode=3, night_mode=2))

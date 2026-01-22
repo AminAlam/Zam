@@ -2,11 +2,14 @@
 Utility functions for Zam Telegram Bot.
 """
 
+import datetime as dt
 import os
 import re
-import datetime as dt
-from telegraph import Telegraph
+
 from persiantools.jdatetime import JalaliDate
+from telegraph import Telegraph
+
+from .configs import UtilsConfig
 
 
 def load_credentials():
@@ -109,7 +112,7 @@ class telegraph:
     def __init__(self, account_name):
         self.account_name = account_name
         self.telegraph = Telegraph()
-        self.api_url = 'https://api.telegra.ph'
+        self.api_url = UtilsConfig.TELEGRAPH_API_URL
         self.create_account()
 
     def create_account(self):

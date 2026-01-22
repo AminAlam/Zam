@@ -3,10 +3,9 @@ Integration and system tests for Zam bot.
 These tests require Docker and external services.
 """
 import os
-import pytest
-import time
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
+import pytest
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -19,17 +18,17 @@ class TestEndToEndCapture:
     def twitter_client(self, tmp_path):
         """Create a TwitterClient instance for testing."""
         from twitter_backend import TwitterClient
-        
+
         mock_db = Mock()
         mock_db.check_tweet_existence.return_value = False
         mock_db.check_tweet_in_queue.return_value = None
         mock_db.add_to_queue.return_value = 1
         mock_db.get_queue_position.return_value = 1
         mock_db.error_log = Mock()
-        
+
         client = TwitterClient(mock_db)
         client.screenshots_dir = str(tmp_path)
-        
+
         return client
 
     @pytest.mark.slow
@@ -40,10 +39,10 @@ class TestEndToEndCapture:
         URL: https://x.com/jack/status/20
         """
         result = twitter_client.capture_tweet(test_tweet_data['url'])
-        
+
         if result is None:
             pytest.skip("Screenshot capture not available (Chrome/Chromium not installed)")
-        
+
         assert result['username'] == test_tweet_data['username']
         assert result['tweet_id'] == test_tweet_data['tweet_id']
         assert os.path.exists(result['screenshot_path'])
@@ -53,10 +52,10 @@ class TestEndToEndCapture:
     def test_capture_creates_valid_image(self, twitter_client, test_tweet_data):
         """Integration test: Verify captured screenshot is a valid image."""
         result = twitter_client.capture_tweet(test_tweet_data['url'])
-        
+
         if result is None:
             pytest.skip("Screenshot capture not available")
-        
+
         # Check file exists and has content
         screenshot_path = result['screenshot_path']
         assert os.path.exists(screenshot_path)
@@ -77,10 +76,10 @@ class TestEndToEndCapture:
             chat_id="123456",
             bot_type="admin"
         )
-        
+
         assert queue_id == 1
         assert position == 1
-        
+
         # Verify database methods were called correctly
         twitter_client.db.add_to_queue.assert_called_once()
 
@@ -140,17 +139,17 @@ class TestSystemHealth:
         """Test that all main modules can be imported."""
         import twitter_backend
         import utils
-        
+
         assert hasattr(twitter_backend, 'TwitterClient')
         assert hasattr(utils, 'load_credentials')
 
     def test_url_patterns(self, test_tweet_data):
         """Test URL pattern matching for various formats."""
         from twitter_backend import TwitterClient
-        
+
         mock_db = Mock()
         client = TwitterClient(mock_db)
-        
+
         # Test various URL formats
         urls = [
             "https://twitter.com/jack/status/20",
@@ -160,7 +159,7 @@ class TestSystemHealth:
             "https://twitter.com/jack/status/20?s=20",
             "https://x.com/jack/status/20?ref=example",
         ]
-        
+
         for url in urls:
             result = client.parse_tweet_url(url)
             assert result is not None, f"Failed to parse: {url}"
@@ -170,9 +169,9 @@ class TestSystemHealth:
     def test_environment_variables_loaded(self, mock_env_vars):
         """Test that environment variables are properly loaded."""
         from utils import load_credentials
-        
+
         creds = load_credentials()
-        
+
         assert creds['ADMIN_TELEGRAM_BOT'] is not None
         assert creds['CHANNEL_NAME'] is not None
         assert len(creds['ADMIN_IDS']) > 0

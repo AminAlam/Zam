@@ -1,11 +1,14 @@
+from math import ceil
+from os import environ
+from os.path import exists
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+
 from .utils import get_chromedriver_default_path
-from os.path import exists
-from os import environ
-from math import ceil
+
 
 async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0):
     chrome_options = Options()
@@ -14,7 +17,7 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
+
     if gui is False:
         chrome_options.add_argument("--headless")
         chrome_options.add_argument(f"--window-size={ceil(1024*scale)},{ceil(1024*scale)}")
@@ -30,7 +33,7 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
         chrome_options.add_argument("--disable-backgrounding-occluded-windows")
         chrome_options.add_argument("--disable-renderer-backgrounding")
         chrome_options.add_argument("--autoplay-policy=no-user-gesture-required")
-    
+
     chrome_options.add_argument("--test-type")
     chrome_options.add_argument("--disable-logging")
     chrome_options.add_argument('--ignore-certificate-errors')
@@ -62,7 +65,7 @@ async def get_driver(custom_options=None, driver_path=None, gui=False, scale=1.0
         except Exception as e:
             print(e)
             pass
-    
+
     # webdriver-manager : priority 3
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)

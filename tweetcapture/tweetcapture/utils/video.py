@@ -3,13 +3,13 @@ Video recording utilities for capturing tweet videos using FFmpeg.
 Supports screen recording of specific regions with audio capture.
 """
 
-import os
-import subprocess
-import threading
-import time
-import signal
 import json
+import os
+import signal
+import subprocess
+import time
 from typing import Optional, Tuple
+
 
 def _ndjson_log(hypothesisId: str, location: str, message: str, data: dict | None = None, runId: str = "pre-fix") -> None:
     """
@@ -42,7 +42,7 @@ class ScreenRecorder:
     Uses x11grab on Linux and gdigrab on Windows.
     """
 
-    def __init__(self, output_path: str, region: Tuple[int, int, int, int], 
+    def __init__(self, output_path: str, region: Tuple[int, int, int, int],
                  display: str = ":99", fps: int = None, with_audio: bool = True):
         """
         Initialize the screen recorder.
@@ -66,17 +66,17 @@ class ScreenRecorder:
     def _build_ffmpeg_command(self) -> list:
         """Build the FFmpeg command for screen recording."""
         x, y, width, height = self.region
-        
+
         # Ensure dimensions are even (required by H.264)
         width = width if width % 2 == 0 else width + 1
         height = height if height % 2 == 0 else height + 1
-        
+
         # Read configurable parameters from environment
         thread_queue = os.environ.get("ZAM_VIDEO_THREAD_QUEUE", "4096")
         crf = os.environ.get("ZAM_VIDEO_CRF", "32")
-        
+
         cmd = ['ffmpeg', '-y']  # -y to overwrite output file
-        
+
         # Check platform
         if os.name == 'nt':
             # Windows - use gdigrab
@@ -88,7 +88,7 @@ class ScreenRecorder:
                 '-video_size', f'{width}x{height}',
                 '-i', 'desktop'
             ])
-            
+
             if self.with_audio:
                 # Windows audio capture (requires audio device)
                 cmd.extend([
@@ -99,13 +99,13 @@ class ScreenRecorder:
             # Linux - use x11grab with settings optimized for Xvfb stability
             cmd.extend([
                 '-f', 'x11grab',
-                '-draw_mouse', '0', 
+                '-draw_mouse', '0',
                 '-thread_queue_size', thread_queue,
                 '-framerate', str(self.fps),
                 '-video_size', f'{width}x{height}',
                 '-i', f'{self.display}+{x},{y}'
             ])
-            
+
             if self.with_audio:
                 # Linux audio capture via PulseAudio
                 cmd.extend([
@@ -114,7 +114,7 @@ class ScreenRecorder:
                     '-ac', '2',
                     '-i', 'default'
                 ])
-        
+
         # Output settings - prioritize speed to avoid drops
         cmd.extend([
             '-c:v', 'libx264',
@@ -123,13 +123,13 @@ class ScreenRecorder:
             '-crf', crf,  # Configurable via ZAM_VIDEO_CRF env var
             '-pix_fmt', 'yuv420p',
         ])
-        
+
         if self.with_audio:
             cmd.extend([
                 '-c:a', 'aac',
                 '-b:a', '128k'
             ])
-        
+
         cmd.append(self.output_path)
 
         # #region agent log
@@ -140,7 +140,7 @@ class ScreenRecorder:
             data={"with_audio": self.with_audio, "display": self.display, "region": list(self.region), "cmd": cmd},
         )
         # #endregion
-        
+
         return cmd
 
     def start(self) -> bool:
@@ -152,10 +152,10 @@ class ScreenRecorder:
         """
         if self._recording:
             return False
-        
+
         try:
             cmd = self._build_ffmpeg_command()
-            
+
             # #region agent log
             print(f"[DEBUG] FFmpeg command: {' '.join(cmd)}")
             print(f"[DEBUG] Capture region: {self.region}, display: {self.display}")
@@ -166,7 +166,7 @@ class ScreenRecorder:
                 data={"with_audio": self.with_audio, "display": self.display, "region": list(self.region)},
             )
             # #endregion
-            
+
             # Start FFmpeg process
             self._process = subprocess.Popen(
                 cmd,
@@ -176,7 +176,7 @@ class ScreenRecorder:
                 # Don't create a new process group on Windows
                 preexec_fn=os.setsid if os.name != 'nt' else None
             )
-            
+
             # #region agent log
             # Give FFmpeg a moment to start and check if it's still running
             time.sleep(0.5)
@@ -200,10 +200,10 @@ class ScreenRecorder:
                 data={"pid": self._process.pid},
             )
             # #endregion
-            
+
             self._recording = True
             return True
-            
+
         except FileNotFoundError:
             print("FFmpeg not found. Please install FFmpeg.")
             return False
@@ -220,7 +220,7 @@ class ScreenRecorder:
         """
         if not self._recording or self._process is None:
             return None
-        
+
         try:
             # #region agent log
             # Check if process already died
@@ -233,12 +233,12 @@ class ScreenRecorder:
                 self._process = None
                 return None
             # #endregion
-            
+
             # Send 'q' to FFmpeg to gracefully stop recording
             if self._process.stdin:
                 self._process.stdin.write(b'q')
                 self._process.stdin.flush()
-            
+
             # Wait for process to finish (with timeout)
             try:
                 self._process.wait(timeout=10)
@@ -249,15 +249,15 @@ class ScreenRecorder:
                 else:
                     self._process.kill()
                 self._process.wait()
-            
+
             self._recording = False
             self._process = None
-            
+
             # Verify output file exists
             if os.path.exists(self.output_path):
                 return self.output_path
             return None
-            
+
         except Exception as e:
             print(f"Error stopping recording: {e}")
             self._recording = False
@@ -284,12 +284,12 @@ class VideoRecordingManager:
         """
         self.output_dir = output_dir
         self.display = display
-        
+
         # Ensure output directory exists
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-    def record_video(self, region: Tuple[int, int, int, int], 
+    def record_video(self, region: Tuple[int, int, int, int],
                      duration: float, filename: str,
                      with_audio: bool = True) -> Optional[str]:
         """
@@ -305,20 +305,20 @@ class VideoRecordingManager:
             Path to recorded video if successful, None otherwise
         """
         output_path = os.path.join(self.output_dir, filename)
-        
+
         recorder = ScreenRecorder(
             output_path=output_path,
             region=region,
             display=self.display,
             with_audio=with_audio
         )
-        
+
         if not recorder.start():
             return None
-        
+
         # Wait for the specified duration
         time.sleep(duration)
-        
+
         return recorder.stop()
 
     def record_with_callback(self, region: Tuple[int, int, int, int],
@@ -335,14 +335,14 @@ class VideoRecordingManager:
             RecordingSession object to control the recording
         """
         output_path = os.path.join(self.output_dir, filename)
-        
+
         recorder = ScreenRecorder(
             output_path=output_path,
             region=region,
             display=self.display,
             with_audio=with_audio
         )
-        
+
         return RecordingSession(recorder)
 
 
@@ -423,7 +423,7 @@ def get_element_screen_position(driver, element, use_viewport_coords: bool = Tru
     # Ensure coordinates are non-negative and within screen bounds
     screen_x = max(0, screen_x)
     screen_y = max(0, screen_y)
-    
+
     # Width and height must be even for H.264
     width = int(rect["width"] * dpr)
     height = int(rect["height"] * dpr)
@@ -489,7 +489,7 @@ def get_video_duration(video_path: str) -> Optional[float]:
             capture_output=True,
             text=True
         )
-        
+
         if result.returncode == 0:
             return float(result.stdout.strip())
         return None
@@ -521,7 +521,7 @@ def _ffprobe_basic_stats(video_path: str) -> dict:
         return {"error": "ffprobe_exception", "detail": str(e)[:200]}
 
 
-def compress_video_for_telegram(input_path: str, output_path: str, 
+def compress_video_for_telegram(input_path: str, output_path: str,
                                  max_size_mb: int = 50) -> Optional[str]:
     """
     Compress a video to fit within Telegram's file size limit.
@@ -537,20 +537,20 @@ def compress_video_for_telegram(input_path: str, output_path: str,
     try:
         # Get input file size
         input_size = os.path.getsize(input_path) / (1024 * 1024)  # MB
-        
+
         if input_size <= max_size_mb:
             # No compression needed
             return input_path
-        
+
         # Calculate target bitrate
         duration = get_video_duration(input_path)
         if duration is None:
             duration = 60  # Assume 60 seconds if unknown
-        
+
         # Target size in bits, with some margin
         target_size_bits = (max_size_mb * 0.9) * 8 * 1024 * 1024
         target_bitrate = int(target_size_bits / duration)
-        
+
         # Run compression
         cmd = [
             'ffmpeg', '-y',
@@ -562,13 +562,13 @@ def compress_video_for_telegram(input_path: str, output_path: str,
             '-b:a', '96k',
             output_path
         ]
-        
+
         result = subprocess.run(cmd, capture_output=True)
-        
+
         if result.returncode == 0 and os.path.exists(output_path):
             return output_path
         return None
-        
+
     except Exception as e:
         print(f"Video compression failed: {e}")
         return None
