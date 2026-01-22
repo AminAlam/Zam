@@ -85,17 +85,17 @@ Zam is a Telegram bot that captures tweets as screenshots and allows admins to s
 
 3. **Build and start the containers**
    ```bash
-   docker-compose up --build -d
+   docker compose up --build -d
    ```
 
 4. **View logs**
    ```bash
-   docker-compose logs -f app
+   docker compose logs -f app
    ```
 
 5. **Stop the application**
    ```bash
-   docker-compose down
+   docker compose down
    ```
 
 ### Manual Installation (Development)
@@ -247,7 +247,7 @@ Options:
 
 ```bash
 # Run with custom options
-docker-compose run app uv run python -m src.main --time_diff 3:30 --user_tweet_limit 5
+docker compose run app uv run python -m src.main --time_diff 3:30 --user_tweet_limit 5
 ```
 
 ### Bot Commands
@@ -354,7 +354,7 @@ Zam/
 ├── uv.lock                 # Lockfile for reproducible builds
 ├── .python-version         # Python version specification
 ├── Dockerfile              # Docker build with uv
-├── docker-compose.yml      # Container orchestration
+├── docker compose.yml      # Container orchestration
 ├── src/                    # Main application code
 │   ├── main.py             # Entry point
 │   ├── telegram_backend.py # Telegram bot handlers
