@@ -6,11 +6,14 @@ import sys
 
 import pytest
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add project root and local tweetcapture to path for imports
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, 'tweetcapture'))
+
 # Ensure we don't accidentally import from src/ directly
-if os.path.join(os.path.dirname(__file__), '..', 'src') in sys.path:
-    sys.path.remove(os.path.join(os.path.dirname(__file__), '..', 'src'))
+if os.path.join(project_root, 'src') in sys.path:
+    sys.path.remove(os.path.join(project_root, 'src'))
 
 # Test tweet URL - Jack Dorsey's first tweet
 TEST_TWEET_URL = "https://x.com/jack/status/20"
