@@ -1,21 +1,19 @@
 from tweetcapture.utils.utils import (
-    is_valid_tweet_url,
-    get_tweet_file_name,
-    get_tweet_base_url,
+    add_corners,
     get_chromedriver_default_path,
+    get_tweet_base_url,
+    get_tweet_file_name,
     image_base64,
-    add_corners
+    is_valid_tweet_url,
 )
-
 from tweetcapture.utils.video import (
+    RecordingSession,
     ScreenRecorder,
     VideoRecordingManager,
-    RecordingSession,
-    get_element_screen_position,
     check_ffmpeg_available,
+    compress_video_for_telegram,
+    get_element_screen_position,
     get_video_duration,
-    compress_video_for_telegram
 )
-
 from tweetcapture.utils.webdriver import get_driver
 

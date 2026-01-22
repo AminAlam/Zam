@@ -33,11 +33,11 @@ def run_migrations(db):
         db: Database instance with get_connection() method
     """
     logger.info("Checking for pending migrations...")
-    
+
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Create migrations table if it doesn't exist
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -47,18 +47,18 @@ def run_migrations(db):
                 )
             """)
             conn.commit()
-            
+
             # Get already applied migrations
             cursor.execute("SELECT version FROM schema_migrations")
             applied = {row[0] for row in cursor.fetchall()}
-            
+
             # Run pending migrations
             pending = [(v, d, s) for v, d, s in MIGRATIONS if v not in applied]
-            
+
             if not pending:
                 logger.info("Database schema is up to date")
                 return
-            
+
             for version, description, sql in pending:
                 logger.info(f"Running migration {version}: {description}")
                 try:
@@ -73,9 +73,9 @@ def run_migrations(db):
                     conn.rollback()
                     logger.error(f"Migration {version} failed: {e}")
                     raise
-            
+
             logger.info(f"Applied {len(pending)} migration(s)")
-            
+
     except Exception as e:
         logger.error(f"Migration error: {e}")
         raise

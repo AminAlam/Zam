@@ -17,11 +17,33 @@ services:
     networks:
       - zam_network
 
+  xvfb:
+    build:
+      context: .
+      dockerfile: Dockerfile.xvfb
+    restart: unless-stopped
+    volumes:
+      - x11_socket:/tmp/.X11-unix
+      - pulse_socket:/run/pulse
+    environment:
+      - DISPLAY=:99
+      - PULSE_SERVER=unix:/run/pulse/native
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /tmp/.X11-unix/X99"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - zam_network
+
   app:
     build: .
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+      xvfb:
         condition: service_healthy
     env_file:
       - .env
@@ -32,8 +54,13 @@ services:
       - ./src:/app/src
       # Debug-mode NDJSON logs (host -> container)
       - ../.cursor:/app/.cursor
+      # Shared X11 and PulseAudio sockets from xvfb service
+      - x11_socket:/tmp/.X11-unix
+      - pulse_socket:/run/pulse
     environment:
       - ZAM_DEBUG_LOG_PATH=/app/.cursor/debug.log
+      - DISPLAY=:99
+      - PULSE_SERVER=unix:/run/pulse/native
     networks:
       - zam_network
 
@@ -41,6 +68,8 @@ volumes:
   postgres_data:
   screenshots:
   videos:
+  x11_socket:
+  pulse_socket:
 
 networks:
   zam_network:

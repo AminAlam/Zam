@@ -3,10 +3,17 @@ Pytest configuration and fixtures for Zam tests.
 """
 import os
 import sys
+
 import pytest
 
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add project root and local tweetcapture to path for imports
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, 'tweetcapture'))
+
+# Ensure we don't accidentally import from src/ directly
+if os.path.join(project_root, 'src') in sys.path:
+    sys.path.remove(os.path.join(project_root, 'src'))
 
 # Test tweet URL - Jack Dorsey's first tweet
 TEST_TWEET_URL = "https://x.com/jack/status/20"

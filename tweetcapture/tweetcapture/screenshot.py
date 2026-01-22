@@ -1,31 +1,34 @@
-from asyncio import sleep
-import os
-import time as sync_time
-import random
 import logging
+import os
+import random
+import time as sync_time
+from asyncio import sleep
+
+from tweetcapture.config import TweetCaptureConfig
 from tweetcapture.utils.webdriver import get_driver
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
-from tweetcapture.utils.utils import is_valid_tweet_url, get_tweet_file_name, add_corners
+from PIL import Image
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
+
+from tweetcapture.utils.utils import add_corners, get_tweet_file_name, is_valid_tweet_url
 from tweetcapture.utils.video import (
-    VideoRecordingManager, 
-    get_element_screen_position, 
+    VideoRecordingManager,
+    _ffprobe_basic_stats,
     check_ffmpeg_available,
     compress_video_for_telegram,
-    _ffprobe_basic_stats
+    get_element_screen_position,
 )
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from PIL import Image
-Image.MAX_IMAGE_PIXELS = None
-from os import remove, environ
-from os.path import exists
 
+Image.MAX_IMAGE_PIXELS = None
 # #region agent log
 import json as _json
+from os import environ, remove
+from os.path import exists
+
+
 def _ndjson_log(hypothesisId: str, location: str, message: str, data: dict | None = None, runId: str = "pre-fix") -> None:
     """
     Debug-mode NDJSON logger (best-effort). Requires ZAM_DEBUG_LOG_PATH to be set.
@@ -53,9 +56,9 @@ class TweetCapture:
     driver = None
     driver_path = None
     gui = False
-    mode = 3
-    night_mode = 0
-    wait_time = 5
+    mode = TweetCaptureConfig.DEFAULT_MODE
+    night_mode = TweetCaptureConfig.DEFAULT_NIGHT_MODE
+    wait_time = TweetCaptureConfig.DEFAULT_WAIT_TIME
     chrome_opts = []
     lang = None
     test = False
@@ -63,8 +66,8 @@ class TweetCapture:
     parent_tweets_limit = 0
     show_mentions_count = 0
     overwrite = False
-    radius = 15
-    scale = 1.0
+    radius = TweetCaptureConfig.DEFAULT_RADIUS
+    scale = TweetCaptureConfig.DEFAULT_SCALE
     cookies = None
 
     hide_link_previews = False
@@ -75,23 +78,23 @@ class TweetCapture:
 
     # Video capture settings
     capture_videos = True
-    video_output_dir = "/app/videos"  # Maps to Docker media folder
-    x_display = ":99"
-    video_max_duration = 120  # Maximum video duration in seconds
-    video_with_audio = True
+    video_output_dir = TweetCaptureConfig.DEFAULT_VIDEO_OUTPUT_DIR
+    x_display = TweetCaptureConfig.DEFAULT_X_DISPLAY
+    video_max_duration = TweetCaptureConfig.DEFAULT_VIDEO_MAX_DURATION
+    video_with_audio = TweetCaptureConfig.DEFAULT_VIDEO_WITH_AUDIO
 
     __web = 1
 
-    def __init__(self, mode=3, night_mode=0, test=False, show_parent_tweets=False, parent_tweets_limit=0, show_mentions_count=0, overwrite=False, radius=15, scale=1.0):
-        self.set_night_mode(night_mode)
-        self.set_mode(mode)
-        self.set_scale(scale)
+    def __init__(self, mode=None, night_mode=None, test=False, show_parent_tweets=False, parent_tweets_limit=0, show_mentions_count=0, overwrite=False, radius=None, scale=None):
+        self.set_night_mode(night_mode if night_mode is not None else TweetCaptureConfig.DEFAULT_NIGHT_MODE)
+        self.set_mode(mode if mode is not None else TweetCaptureConfig.DEFAULT_MODE)
+        self.set_scale(scale if scale is not None else TweetCaptureConfig.DEFAULT_SCALE)
         self.test = test
         self.show_parent_tweets = show_parent_tweets
         self.parent_tweets_limit = parent_tweets_limit
         self.show_mentions_count = show_mentions_count
         self.overwrite = overwrite
-        self.radius = radius
+        self.radius = radius if radius is not None else TweetCaptureConfig.DEFAULT_RADIUS
         if environ.get('AUTH_TOKEN') != None:
             self.cookies = [{'name': 'auth_token', 'value': environ.get('AUTH_TOKEN')}]
 
@@ -127,23 +130,27 @@ class TweetCapture:
             driver.get(url)
             self.__init_scale_css(driver)
             await sleep(self.wait_time)
-           
+
             self.__hide_global_items(driver)
             driver.execute_script("!!document.activeElement ? document.activeElement.blur() : 0")
 
-            if self.test is True: 
+            if self.test is True:
                 driver.save_screenshot(f"web{self.__web}.png")
                 self.__web += 1
-            await sleep(2.0)
+            await sleep(TweetCaptureConfig.PAGE_LOAD_WAIT)
             elements, main = self.__get_tweets(driver, self.show_parent_tweets if show_parent_tweets is None else show_parent_tweets, self.parent_tweets_limit if parent_tweets_limit is None else parent_tweets_limit, self.show_mentions_count if show_mentions_count is None else show_mentions_count)
             if len(elements) == 0:
                 raise Exception("Tweets not found")
-            
-            # Extract tweet text from the main tweet element before modifying DOM
-            tweet_text = ''
+
+            # Click "Show more" button if present to expand truncated text
             if main >= 0 and main < len(elements):
-                tweet_text = self.extract_tweet_text(elements[main])
-            
+                self._click_show_more_buttons(driver, elements[main])
+
+            # Extract tweet text from the main tweet element before modifying DOM
+            tweet_text_data = {'main_text': '', 'quoted_tweet': None}
+            if main >= 0 and main < len(elements):
+                tweet_text_data = self.extract_tweet_text(elements[main])
+
             # Continue with screenshot processing
             for i, element in enumerate(elements):
                     if i == main:
@@ -153,15 +160,15 @@ class TweetCapture:
                             driver.execute_script(self.__code_footer_items(self.mode if mode is None else mode), element.find_element(By.XPATH, ".//div[@role = 'group']"), element.find_element(By.CSS_SELECTOR, ".r-1hdv0qi:first-of-type"))
                         except:
                             pass
-                    
+
                     self.__hide_media(element, self.hide_link_previews, self.hide_photos, self.hide_videos, self.hide_gifs, self.hide_quotes)
                     if i == len(elements)-1:
                         self.__margin_tweet(self.mode if mode is None else mode, element)
-                        
+
             if len(elements) == 1:
                 driver.execute_script("window.scrollTo(0, 0);")
                 x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", elements[0])
-                await sleep(0.1)
+                await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
                 if scale != 1.0:
                     driver.save_screenshot(path)
                 else:
@@ -180,7 +187,7 @@ class TweetCapture:
                     filename = "tmp_%s_tweetcapture.png" % element.id
                     driver.execute_script("arguments[0].scrollIntoView();", element)
                     x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", element)
-                    await sleep(0.1)
+                    await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
                     if scale != 1.0:
                         driver.save_screenshot(filename)
                         im = Image.open(filename)
@@ -199,11 +206,7 @@ class TweetCapture:
                         width = im.size[0]
                     height += im.size[1]
                     images.append(im)
-                c = (255,255,255)
-                if self.night_mode == 1:
-                    c = (21,32,43)
-                elif self.night_mode == 2:
-                    c = (0,0,0)
+                c = TweetCaptureConfig.NIGHT_MODE_COLORS.get(self.night_mode, TweetCaptureConfig.NIGHT_MODE_COLORS[0])
                 new_im = Image.new('RGB', (width,height), c)
                 y = 0
                 for im in images:
@@ -211,20 +214,20 @@ class TweetCapture:
                     y += im.size[1]
                     im.close()
                     remove(im.filename)
-                
+
                 if radius > 0:
                     new_im = add_corners(new_im, self.radius)
                 new_im.save(path, quality=100)
                 new_im.close()
-  
+
             driver.quit()
         except Exception as err:
             driver.quit()
             raise err
-        return {'screenshot_path': path, 'tweet_text': tweet_text}
-        
+        return {'screenshot_path': path, 'tweet_text': tweet_text_data}
+
     def set_wait_time(self, time):
-        if 1.0 <= time <= 10.0: 
+        if TweetCaptureConfig.WAIT_TIME_MIN <= time <= TweetCaptureConfig.WAIT_TIME_MAX:
             self.wait_time = time
 
     def get_night_mode(self):
@@ -245,14 +248,14 @@ class TweetCapture:
 
     def set_chromedriver_path(self, path):
         self.driver_path = path
-    
+
     def set_cookies(self, cookies):
         if isinstance(cookies, list):
             self.cookies = cookies
 
     def set_scale(self, scale):
         if isinstance(scale, float):
-            if scale > 0.0 and scale <= 14.0:
+            if scale > TweetCaptureConfig.SCALE_MIN and scale <= TweetCaptureConfig.SCALE_MAX:
                 self.scale = scale
 
     def __init_scale_css(self, driver):
@@ -295,13 +298,13 @@ class TweetCapture:
             return """
             arguments[1].style.display="none";
             """
-    
+
     def hide_all_media(self):
         self.hide_link_previews = True
         self.hide_photos = True
         self.hide_videos = True
         self.hide_gifs = True
-        self.hide_quotes = True  
+        self.hide_quotes = True
 
     def hide_media(self, link_previews=None, photos=None, videos=None, gifs=None, quotes=None):
         if link_previews is not None: self.hide_link_previews = link_previews
@@ -386,7 +389,7 @@ class TweetCapture:
                 newInfoMode = False
         except:
             pass
-        
+
         hides = []
         if mode == 0: # hide everything
             hides = [0,1,2,3,4,5,6,7,9]
@@ -420,7 +423,7 @@ class TweetCapture:
                     element.parent.execute_script("""
                     arguments[0].style.display="none";
                     """, el)
-        
+
         brdr = element.find_elements(By.XPATH, XPATHS[2])
         if len(brdr) == 1:
             element.parent.execute_script("""
@@ -458,7 +461,7 @@ class TweetCapture:
                     if parent_tweets_limit > 0 and len(elements[s1:main_element]) > parent_tweets_limit:
                         s1 = main_element - parent_tweets_limit
                     if show_parents and show_mentions_count > 0:
-                        if len(elements[r:]) > show_mentions_count:      
+                        if len(elements[r:]) > show_mentions_count:
                             return (elements[s1:r] + elements[r:r2]), main_element
                         return elements[s1:], main_element
                     elif show_parents:
@@ -473,13 +476,138 @@ class TweetCapture:
                     else:
                         return elements[main_element:r], 0
         return [], -1
-    
+
     def set_gui(self, gui):
         self.gui = True if gui is True else False
 
+    def _click_show_more_buttons(self, driver, element) -> bool:
+        """
+        Click any "Show more" buttons in a tweet element to expand truncated text.
+        
+        Args:
+            driver: Selenium WebDriver
+            element: Tweet element that may contain truncated text
+            
+        Returns:
+            True if any "Show more" button was clicked, False otherwise
+        """
+        clicked = False
+
+        def try_click_button(btn, method_name):
+            """Helper to click a button with multiple strategies."""
+            nonlocal clicked
+            try:
+                # Scroll the button into view first
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                sync_time.sleep(TweetCaptureConfig.SHOW_MORE_SCROLL_WAIT)
+
+                # Try regular click first
+                try:
+                    btn.click()
+                    clicked = True
+                    logger.info(f"Clicked 'Show more' button via {method_name}")
+                    sync_time.sleep(TweetCaptureConfig.SHOW_MORE_CLICK_WAIT)  # Wait for text to expand
+                    return True
+                except Exception:
+                    pass
+
+                # Try JavaScript click as fallback
+                try:
+                    driver.execute_script("arguments[0].click();", btn)
+                    clicked = True
+                    logger.info(f"Clicked 'Show more' button via {method_name} (JS click)")
+                    sync_time.sleep(TweetCaptureConfig.SHOW_MORE_CLICK_WAIT)  # Wait for text to expand
+                    return True
+                except Exception as e:
+                    logger.debug(f"JS click failed: {e}")
+
+            except Exception as e:
+                logger.debug(f"Could not click button via {method_name}: {e}")
+            return False
+
+        # First, try the most reliable selector: data-testid (no text check needed)
+        try:
+            show_more_buttons = element.find_elements(By.CSS_SELECTOR, '[data-testid="tweet-text-show-more-link"]')
+            logger.info(f"Found {len(show_more_buttons)} 'Show more' buttons via data-testid")
+            for button in show_more_buttons:
+                if try_click_button(button, "data-testid"):
+                    break
+        except Exception as e:
+            logger.debug(f"data-testid selector failed: {e}")
+
+        # Also search from the driver (page-level) in case button is outside element
+        if not clicked:
+            try:
+                show_more_buttons = driver.find_elements(By.CSS_SELECTOR, '[data-testid="tweet-text-show-more-link"]')
+                logger.info(f"Found {len(show_more_buttons)} 'Show more' buttons via data-testid (page-level)")
+                for button in show_more_buttons:
+                    if try_click_button(button, "data-testid (page-level)"):
+                        break
+            except Exception as e:
+                logger.debug(f"Page-level data-testid selector failed: {e}")
+
+        # If data-testid didn't work, try other selectors with text matching
+        if not clicked:
+            show_more_selectors = [
+                'span[role="button"]',
+                'div[role="button"]',
+                'button',
+            ]
+            show_more_texts = ['show more', 'more', 'نمایش بیشتر', 'بیشتر']  # Include Persian translations
+
+            for selector in show_more_selectors:
+                if clicked:
+                    break
+                try:
+                    buttons = element.find_elements(By.CSS_SELECTOR, selector)
+                    for button in buttons:
+                        try:
+                            button_text = button.text.strip().lower()
+                            # Check if this button is a "Show more" type button
+                            if any(text in button_text for text in show_more_texts):
+                                if try_click_button(button, f"text-match ({selector})"):
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Could not process button: {e}")
+                            continue
+                except Exception as e:
+                    logger.debug(f"Selector {selector} failed: {e}")
+                    continue
+
+        # Try XPath-based approach as last resort
+        if not clicked:
+            try:
+                show_more_xpath_patterns = [
+                    ".//span[contains(text(), 'Show more')]",
+                    ".//div[contains(text(), 'Show more')]",
+                    ".//button[contains(text(), 'Show more')]",
+                    "//button[@data-testid='tweet-text-show-more-link']",  # Absolute XPath
+                ]
+                for xpath in show_more_xpath_patterns:
+                    if clicked:
+                        break
+                    try:
+                        # Try both element-relative and driver-level search
+                        show_more_elements = element.find_elements(By.XPATH, xpath)
+                        if not show_more_elements and xpath.startswith("//"):
+                            show_more_elements = driver.find_elements(By.XPATH, xpath)
+
+                        for el in show_more_elements:
+                            if try_click_button(el, f"XPath ({xpath[:30]}...)"):
+                                break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.debug(f"XPath approach for Show more failed: {e}")
+
+        if not clicked:
+            logger.info("No 'Show more' button found or clicked")
+
+        return clicked
+
     # ==================== Video Capture Methods ====================
 
-    def enable_video_capture(self, output_dir: str, x_display: str = ":99", 
+    def enable_video_capture(self, output_dir: str, x_display: str = ":99",
                              max_duration: int = 120, with_audio: bool = True):
         """
         Enable video capture for tweets containing videos.
@@ -495,7 +623,7 @@ class TweetCapture:
         self.x_display = x_display
         self.video_max_duration = max_duration
         self.video_with_audio = with_audio
-        
+
         # Ensure output directory exists
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -531,9 +659,10 @@ class TweetCapture:
         """
         return element.find_elements(By.CSS_SELECTOR, '[data-testid="videoPlayer"]')
 
-    def extract_tweet_text(self, element) -> str:
+    def extract_tweet_text(self, element) -> dict:
         """
-        Extract the tweet text from a tweet element using DOM selectors.
+        Extract the tweet text from a tweet element using DOM selectors,
+        including any quoted tweet content.
         
         This is more accurate than OCR as it gets the exact text from the HTML.
         
@@ -541,19 +670,172 @@ class TweetCapture:
             element: Selenium WebElement representing the tweet
             
         Returns:
-            Tweet text string, or empty string if not found
+            dict with:
+                - main_text: The main tweet text
+                - quoted_tweet: dict with author, handle, text, url (or None if no quote)
         """
+        import re
+        result = {
+            'main_text': '',
+            'quoted_tweet': None
+        }
+
+        def _normalize_whitespace(text: str) -> str:
+            return re.sub(r'\s+', ' ', text or '').strip()
+
         try:
-            # Twitter uses data-testid="tweetText" for the main tweet content
+            # First, try to identify the quoted tweet container
+            # Quoted tweets are inside a div with role="link" and contain their own tweetText
+            quoted_container = None
+            quoted_text = ''
+            quoted_author = ''
+            quoted_handle = ''
+            quoted_text_elements = []
+
+            # Look for quoted tweet container - it's a clickable link containing another tweet
+            try:
+                # Find the quoted tweet block (has role="link" and tabindex="0")
+                quoted_containers = element.find_elements(By.CSS_SELECTOR, 'div[role="link"][tabindex="0"]')
+                for container in quoted_containers:
+                    # Check if this container has a tweetText inside (indicates it's a quoted tweet)
+                    inner_text_elements = container.find_elements(By.CSS_SELECTOR, '[data-testid="tweetText"]')
+                    if inner_text_elements:
+                        quoted_container = container
+                        quoted_text_elements = inner_text_elements
+                        quoted_text = _normalize_whitespace(inner_text_elements[0].text)
+
+                        # Extract author name from the quoted tweet
+                        try:
+                            # Look for User-Name element inside the quoted container
+                            user_name_el = container.find_element(By.CSS_SELECTOR, '[data-testid="User-Name"]')
+                            spans = user_name_el.find_elements(By.TAG_NAME, 'span')
+                            for span in spans:
+                                text = _normalize_whitespace(span.text)
+                                if not text:
+                                    continue
+                                if text.startswith('@') and not quoted_handle:
+                                    quoted_handle = text
+                                    continue
+                                if text in ('·', '•'):
+                                    continue
+                                if not quoted_author and not text.startswith('@'):
+                                    quoted_author = text
+                        except Exception as e:
+                            logger.debug(f"Could not extract quoted tweet author: {e}")
+
+                        # Extract quoted tweet URL
+                        quoted_url = ''
+                        try:
+                            # Method 1: Look for anchor tags with status URLs inside the quoted container
+                            anchors = container.find_elements(By.TAG_NAME, 'a')
+                            for anchor in anchors:
+                                href = anchor.get_attribute('href')
+                                if href and '/status/' in href:
+                                    quoted_url = href
+                                    break
+                            
+                            # Method 2: Try to find a time element's parent link (sometimes present)
+                            if not quoted_url:
+                                try:
+                                    time_el = container.find_element(By.TAG_NAME, 'time')
+                                    # Check parent elements for an anchor with status URL
+                                    parent = time_el.find_element(By.XPATH, './ancestor::a[@href]')
+                                    href = parent.get_attribute('href')
+                                    if href and '/status/' in href:
+                                        quoted_url = href
+                                except Exception:
+                                    pass
+                            
+                            # Method 3: Use JavaScript to get navigation URL from the container
+                            if not quoted_url:
+                                try:
+                                    # Try to extract URL from React fiber or internal properties
+                                    from selenium.webdriver.remote.webdriver import WebDriver
+                                    driver = container._parent
+                                    if isinstance(driver, WebDriver):
+                                        # Try getting the href from internal React state
+                                        quoted_url = driver.execute_script("""
+                                            var el = arguments[0];
+                                            
+                                            // Helper to recursively search for href in object
+                                            function findHref(obj, depth) {
+                                                if (!obj || depth > 10) return null;
+                                                if (typeof obj === 'string' && obj.includes('/status/')) return obj;
+                                                if (obj.href && typeof obj.href === 'string' && obj.href.includes('/status/')) return obj.href;
+                                                if (typeof obj !== 'object') return null;
+                                                
+                                                for (var key in obj) {
+                                                    try {
+                                                        var result = findHref(obj[key], depth + 1);
+                                                        if (result) return result;
+                                                    } catch(e) {}
+                                                }
+                                                return null;
+                                            }
+                                            
+                                            // Check for React fiber/props
+                                            var keys = Object.keys(el);
+                                            for (var i = 0; i < keys.length; i++) {
+                                                var key = keys[i];
+                                                if (key.startsWith('__reactFiber') || key.startsWith('__reactProps')) {
+                                                    var result = findHref(el[key], 0);
+                                                    if (result) return result;
+                                                }
+                                            }
+                                            
+                                            // Also try data attributes
+                                            return el.getAttribute('data-href') || '';
+                                        """, container) or ''
+                                except Exception as js_err:
+                                    logger.debug(f"JavaScript URL extraction failed: {js_err}")
+                            
+                            # Method 4: Construct URL from handle if we have it (profile link as fallback)
+                            if not quoted_url and quoted_handle:
+                                # Create a profile URL as fallback (not the exact tweet, but the user)
+                                handle_clean = quoted_handle.lstrip('@')
+                                if handle_clean:
+                                    quoted_url = f"https://x.com/{handle_clean}"
+                                    logger.debug(f"Using profile URL as fallback: {quoted_url}")
+                        except Exception as e:
+                            logger.debug(f"Could not extract quoted tweet URL: {e}")
+
+                        break
+            except Exception as e:
+                logger.debug(f"No quoted tweet found: {e}")
+
+            # Now get all tweetText elements
             text_elements = element.find_elements(By.CSS_SELECTOR, '[data-testid="tweetText"]')
+
             if text_elements:
-                # Get the text from the first (main) tweet text element
-                tweet_text = text_elements[0].text
-                logger.info(f"Extracted tweet text: {len(tweet_text)} characters")
-                return tweet_text
+                # Prefer the first tweetText that is NOT inside the quoted container
+                for text_el in text_elements:
+                    if quoted_container and text_el in quoted_text_elements:
+                        continue
+                    main_text = _normalize_whitespace(text_el.text)
+                    if main_text:
+                        result['main_text'] = main_text
+                        break
+
+                if quoted_container and quoted_text:
+                    result['quoted_tweet'] = {
+                        'author': quoted_author,
+                        'handle': quoted_handle,
+                        'text': quoted_text,
+                        'url': quoted_url
+                    }
+                    logger.info(
+                        "Extracted main text (%s chars) and quoted tweet (%s chars), url=%s",
+                        len(result['main_text']),
+                        len(quoted_text),
+                        quoted_url
+                    )
+                else:
+                    logger.info("Extracted tweet text: %s characters", len(result['main_text']))
+
         except Exception as e:
             logger.warning(f"Failed to extract tweet text: {e}")
-        return ''
+
+        return result
 
     def _get_video_duration_from_player(self, driver, video_player) -> float:
         """
@@ -576,12 +858,12 @@ class TweetCapture:
                 }
                 return null;
             """, video_element)
-            
+
             if duration:
                 return min(float(duration), self.video_max_duration)
         except:
             pass
-        
+
         # Try to find duration text in the player controls
         try:
             duration_elements = video_player.find_elements(By.CSS_SELECTOR, '[data-testid="progressBarTime"]')
@@ -591,9 +873,9 @@ class TweetCapture:
                 return self._parse_duration_text(duration_text)
         except:
             pass
-        
+
         # Default duration if we can't determine it
-        return 30.0
+        return TweetCaptureConfig.DEFAULT_VIDEO_DURATION
 
     def _parse_duration_text(self, duration_text: str) -> float:
         """
@@ -615,7 +897,7 @@ class TweetCapture:
                 return hours * 3600 + minutes * 60 + seconds
         except:
             pass
-        return 30.0  # Default
+        return TweetCaptureConfig.DEFAULT_VIDEO_DURATION  # Default
 
     def _click_video_play_button(self, driver, video_player) -> bool:
         """
@@ -637,7 +919,7 @@ class TweetCapture:
                 'button[aria-label*="Play"]',
                 '.PlayButton',
             ]
-            
+
             for selector in play_button_selectors:
                 try:
                     play_button = video_player.find_element(By.CSS_SELECTOR, selector)
@@ -646,16 +928,16 @@ class TweetCapture:
                         return True
                 except NoSuchElementException:
                     continue
-            
+
             # Try clicking the video player itself (some videos auto-play on click)
             video_player.click()
             return True
-            
+
         except Exception as e:
             print(f"Could not click play button: {e}")
             return False
 
-    def _wait_for_video_to_start(self, driver, video_player, timeout: int = 10) -> bool:
+    def _wait_for_video_to_start(self, driver, video_player, timeout: int = None) -> bool:
         """
         Wait for a video to start playing.
         
@@ -667,24 +949,26 @@ class TweetCapture:
         Returns:
             True if video started playing, False otherwise
         """
+        if timeout is None:
+            timeout = TweetCaptureConfig.VIDEO_START_TIMEOUT
         try:
             video_element = video_player.find_element(By.TAG_NAME, 'video')
-            
+
             # Wait for the video to start playing
             for _ in range(timeout * 2):
                 is_playing = driver.execute_script("""
                     var video = arguments[0];
                     return !video.paused && !video.ended && video.currentTime > 0;
                 """, video_element)
-                
+
                 if is_playing:
                     return True
-                sync_time.sleep(0.5)
-            
+                sync_time.sleep(TweetCaptureConfig.VIDEO_POLL_INTERVAL)
+
             return False
         except:
             # If we can't find the video element, assume it might be playing
-            sync_time.sleep(2)
+            sync_time.sleep(TweetCaptureConfig.PAGE_LOAD_WAIT)
             return True
 
     def _wait_for_video_to_end(self, driver, video_player, max_duration: float) -> None:
@@ -697,10 +981,10 @@ class TweetCapture:
             max_duration: Maximum seconds to wait
         """
         start_time = sync_time.time()
-        
+
         try:
             video_element = video_player.find_element(By.TAG_NAME, 'video')
-            
+
             while (sync_time.time() - start_time) < max_duration:
                 try:
                     # Only check for 'ended' to avoid stopping on buffer pauses
@@ -708,20 +992,20 @@ class TweetCapture:
                         var video = arguments[0];
                         return video.ended;
                     """, video_element)
-                    
+
                     if ended:
-                        # Add a 1.5s buffer to ensure we captured the very end
-                        sync_time.sleep(1.5)
+                        # Add buffer to ensure we captured the very end
+                        sync_time.sleep(TweetCaptureConfig.VIDEO_END_BUFFER)
                         return
                 except:
                     pass
-                
-                sync_time.sleep(0.5)
+
+                sync_time.sleep(TweetCaptureConfig.VIDEO_POLL_INTERVAL)
         except:
             # If we can't monitor the video, just wait for max duration
             sync_time.sleep(max_duration)
 
-    def _capture_single_video(self, driver, tweet_element, video_player, 
+    def _capture_single_video(self, driver, tweet_element, video_player,
                               video_index: int, tweet_id: str) -> str:
         """
         Capture a single video from a tweet.
@@ -739,21 +1023,21 @@ class TweetCapture:
         if not check_ffmpeg_available():
             print("FFmpeg is not available. Cannot capture video.")
             return None
-        
+
         # Generate output filename
         random_suffix = random.randint(1, 1000000000)
         filename = f"{tweet_id}_video_{video_index}_{random_suffix}.mp4"
         output_path = os.path.join(self.video_output_dir, filename)
-        
+
         try:
             # Match static screenshot logic: scroll PAGE to top
             driver.execute_script("window.scrollTo(0, 0);")
-            sync_time.sleep(0.5)
-            
+            sync_time.sleep(TweetCaptureConfig.VIDEO_POLL_INTERVAL)
+
             # Get the screen position of the TWEET element
             # In Kiosk mode with scrollTo(0,0), getBoundingClientRect is absolute screen position
             region = get_element_screen_position(driver, tweet_element, use_viewport_coords=True)
-            
+
             # #region agent log
             _ndjson_log(
                 hypothesisId="H_CROP_MATH",
@@ -762,34 +1046,34 @@ class TweetCapture:
                 data={"tweet_id": tweet_id, "video_index": video_index, "region_px": list(region)},
             )
             # #endregion
-            
+
             # Get video duration
             duration = self._get_video_duration_from_player(driver, video_player)
-            
+
             # Create recording manager
             recording_manager = VideoRecordingManager(
                 output_dir=self.video_output_dir,
                 display=self.x_display
             )
-            
+
             # Start the recording session
             session = recording_manager.record_with_callback(
                 region=region,
                 filename=filename,
                 with_audio=self.video_with_audio
             )
-            
+
             # Start recording
             if not session.start():
                 print("Failed to start video recording")
                 return None
-            
+
             # Small delay to ensure recording has started
-            sync_time.sleep(0.3)
-            
+            sync_time.sleep(TweetCaptureConfig.RECORDING_START_DELAY)
+
             # Click play button
             self._click_video_play_button(driver, video_player)
-            
+
             # Wait for video to start
             self._wait_for_video_to_start(driver, video_player)
 
@@ -803,13 +1087,13 @@ class TweetCapture:
                 data={"tweet_id": tweet_id, "video_index": video_index, "region_px": list(region2)},
             )
             # #endregion
-            
+
             # Wait for video to end (or max duration)
             self._wait_for_video_to_end(driver, video_player, duration)
-            
+
             # Stop recording
             result_path = session.stop()
-            
+
             if result_path and os.path.exists(result_path):
                 # #region agent log
                 stats = _ffprobe_basic_stats(result_path)
@@ -820,20 +1104,20 @@ class TweetCapture:
                     data={"path": result_path, "ffprobe": stats},
                 )
                 # #endregion
-                # Check if compression is needed for Telegram (50MB limit)
+                # Check if compression is needed for Telegram
                 file_size_mb = os.path.getsize(result_path) / (1024 * 1024)
-                if file_size_mb > 50:
+                if file_size_mb > TweetCaptureConfig.TELEGRAM_MAX_FILE_SIZE_MB:
                     compressed_path = result_path.replace('.mp4', '_compressed.mp4')
                     compressed = compress_video_for_telegram(result_path, compressed_path)
                     if compressed and compressed != result_path:
                         # Remove original, keep compressed
                         os.remove(result_path)
                         return compressed
-                
+
                 return result_path
-            
+
             return None
-            
+
         except Exception as e:
             print(f"Error capturing video: {e}")
             return None
@@ -884,16 +1168,16 @@ class TweetCapture:
 
         radius = self.radius if radius is None else radius
         scale = self.scale if scale is None else scale
-        
+
         # For video capture, we need GUI mode (non-headless)
         use_gui = self.gui or self.capture_videos
-        
+
         driver = await get_driver(self.chrome_opts, self.driver_path, use_gui, scale)
         if driver is None:
             raise Exception("webdriver cannot be initialized")
-        
+
         video_paths = []
-        
+
         try:
             driver.get(url)
             driver.add_cookie(
@@ -904,31 +1188,34 @@ class TweetCapture:
             driver.get(url)
             self.__init_scale_css(driver)
             await sleep(self.wait_time)
-           
+
             self.__hide_global_items(driver)
             driver.execute_script("!!document.activeElement ? document.activeElement.blur() : 0")
 
-            if self.test is True: 
+            if self.test is True:
                 driver.save_screenshot(f"web{self.__web}.png")
                 self.__web += 1
-            await sleep(2.0)
-            
+            await sleep(TweetCaptureConfig.PAGE_LOAD_WAIT)
+
             elements, main = self.__get_tweets(
-                driver, 
-                self.show_parent_tweets if show_parent_tweets is None else show_parent_tweets, 
-                self.parent_tweets_limit if parent_tweets_limit is None else parent_tweets_limit, 
+                driver,
+                self.show_parent_tweets if show_parent_tweets is None else show_parent_tweets,
+                self.parent_tweets_limit if parent_tweets_limit is None else parent_tweets_limit,
                 self.show_mentions_count if show_mentions_count is None else show_mentions_count
             )
-            
+
             if len(elements) == 0:
                 raise Exception("Tweets not found")
-            
+
             # Get the main tweet element
             main_element = elements[main] if main >= 0 and main < len(elements) else elements[0]
-            
+
+            # Click "Show more" button if present to expand truncated text
+            self._click_show_more_buttons(driver, main_element)
+
             # Extract tweet text from the main tweet element before modifying DOM
-            tweet_text = self.extract_tweet_text(main_element)
-            
+            tweet_text_data = self.extract_tweet_text(main_element)
+
             # Detect and capture videos from the main tweet
             # #region agent log
             print(f"[DEBUG] Checking video capture: capture_videos={self.capture_videos}, video_output_dir={self.video_output_dir}")
@@ -940,20 +1227,20 @@ class TweetCapture:
                 # #region agent log
                 print(f"[DEBUG] Video count detected: {video_count}")
                 # #endregion
-                
+
                 if video_count > 0:
                     # Get the actual video player elements for capture
                     video_players = self.get_video_elements(main_element)
                     # Extract tweet ID from URL for filenames
                     tweet_id = url.split('/status/')[-1].split('?')[0].split('/')[0]
-                    
+
                     for idx, video_player in enumerate(video_players):
                         video_path = self._capture_single_video(
                             driver, main_element, video_player, idx, tweet_id
                         )
                         if video_path:
                             video_paths.append(video_path)
-            
+
             # Now take the screenshot (process elements as in original screenshot method)
             for i, element in enumerate(elements):
                 if i == main:
@@ -961,25 +1248,25 @@ class TweetCapture:
                 else:
                     try:
                         driver.execute_script(
-                            self.__code_footer_items(self.mode if mode is None else mode), 
-                            element.find_element(By.XPATH, ".//div[@role = 'group']"), 
+                            self.__code_footer_items(self.mode if mode is None else mode),
+                            element.find_element(By.XPATH, ".//div[@role = 'group']"),
                             element.find_element(By.CSS_SELECTOR, ".r-1hdv0qi:first-of-type")
                         )
                     except:
                         pass
-                
-                self.__hide_media(element, self.hide_link_previews, self.hide_photos, 
+
+                self.__hide_media(element, self.hide_link_previews, self.hide_photos,
                                  self.hide_videos, self.hide_gifs, self.hide_quotes)
                 if i == len(elements)-1:
                     self.__margin_tweet(self.mode if mode is None else mode, element)
-                    
+
             if len(elements) == 1:
                 driver.execute_script("window.scrollTo(0, 0);")
                 x, y, width, height = driver.execute_script(
-                    "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", 
+                    "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];",
                     elements[0]
                 )
-                await sleep(0.1)
+                await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
                 if scale != 1.0:
                     driver.save_screenshot(screenshot_path)
                 else:
@@ -998,10 +1285,10 @@ class TweetCapture:
                     filename = "tmp_%s_tweetcapture.png" % element.id
                     driver.execute_script("arguments[0].scrollIntoView();", element)
                     x, y, width, height = driver.execute_script(
-                        "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", 
+                        "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];",
                         element
                     )
-                    await sleep(0.1)
+                    await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
                     if scale != 1.0:
                         driver.save_screenshot(filename)
                         im = Image.open(filename)
@@ -1020,11 +1307,7 @@ class TweetCapture:
                         width = im.size[0]
                     height += im.size[1]
                     images.append(im)
-                c = (255,255,255)
-                if self.night_mode == 1:
-                    c = (21,32,43)
-                elif self.night_mode == 2:
-                    c = (0,0,0)
+                c = TweetCaptureConfig.NIGHT_MODE_COLORS.get(self.night_mode, TweetCaptureConfig.NIGHT_MODE_COLORS[0])
                 new_im = Image.new('RGB', (width,height), c)
                 y = 0
                 for im in images:
@@ -1032,21 +1315,21 @@ class TweetCapture:
                     y += im.size[1]
                     im.close()
                     remove(im.filename)
-                
+
                 if radius > 0:
                     new_im = add_corners(new_im, self.radius)
                 new_im.save(screenshot_path, quality=100)
                 new_im.close()
-  
+
             driver.quit()
-            
+
         except Exception as err:
             driver.quit()
             raise err
-        
+
         return {
             'screenshot_path': screenshot_path,
             'video_paths': video_paths,
             'has_videos': len(video_paths) > 0,
-            'tweet_text': tweet_text
+            'tweet_text': tweet_text_data
         }
