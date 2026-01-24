@@ -1304,11 +1304,20 @@ class TelegramAdminBot(TelegramBot):
                                             media=media_array
                                         )
                                     else:
+                                        # For voice messages, add an inline button linked to the suggestions bot
+                                        reply_markup_main = None
+                                        if tweet_id.startswith("VOICE_"):
+                                            bot_username = self.creds.get("SUGGESTIONS_BOT_ID", "").lstrip("@")
+                                            if bot_username:
+                                                keyboard = [[InlineKeyboardButton("🎤 Send your voice", url=f"https://t.me/{bot_username}")]]
+                                                reply_markup_main = InlineKeyboardMarkup(keyboard)
+
                                         self.message_queue.send_message_sync(
                                             chat_id=self.MAIN_CHANNEL_CHAT_ID,
                                             text=tweet_text,
                                             disable_web_page_preview=True,
-                                            entities=entities_list_converted if entities_list_converted else None
+                                            entities=entities_list_converted if entities_list_converted else None,
+                                            reply_markup=reply_markup_main
                                         )
 
                                     self.db.remove_tweet_from_line(tweet_id)
@@ -1475,7 +1484,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         query.edit_message_text(
             "🎤 *Send your voice*\n\n"
             "Please type the message you'd like to share with the channel.\n\n"
-            "This will be posted to the suggestions channel with your chosen name.",
+            "This will be posted to the channel with your chosen name after admin approval.",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -1910,26 +1919,35 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         channel_post = (
             f"🎤 *Your Voice*\n\n"
             f"\"{message}\"\n\n"
-            f"👤 *By:* {name}\n"
-            f"📅 *Date:* {current_date_persian}\n"
-            f"📢 *Channel:* {main_channel}"
+            f"👤 {name}\n"
+            f"📅  {current_date_persian}\n"
+            f"{main_channel}"
         )
 
-        # Send to suggestions channel
-        self.message_queue.send_message(
+        # Generate a unique ID for this voice message to allow scheduling
+        voice_id = f"VOICE_{int(time.time())}"
+
+        # Add to the scheduled line table so admins can pick it up
+        self.db.add_tweet_to_line({
+            'tweet_id': voice_id,
+            'tweet_text': channel_post
+        })
+
+        # Send to suggestions channel (sync because we need the message_id to reply with options)
+        sent_messages = self.message_queue.send_message_sync(
             chat_id=self.CHAT_ID,
             text=channel_post,
             parse_mode='Markdown'
         )
 
-        # Also log it as a special kind of feedback or just notify admins
-        admin_notification = (
-            f"🎤 New 'Voice' submission from @{user_name}:\n\n"
-            f"Name: {name}\n"
-            f"Message: \"{message}\""
+        # Add scheduling buttons as a reply in the suggestions channel
+        reply_markup, markup_text = self.make_time_options(voice_id)
+        self.message_queue.send_message_sync(
+            chat_id=self.CHAT_ID,
+            text=markup_text,
+            reply_markup=reply_markup,
+            reply_to_message_id=sent_messages.message_id
         )
-        # Note: self.CHAT_ID is the suggestions chat id where admins see suggestions
-        # We already sent the formatted version there.
 
         # Confirm to user
         keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
