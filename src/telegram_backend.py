@@ -405,59 +405,78 @@ class TelegramBot:
         current_len = self._append_text(parts, current_len, authors_text)
         current_len = self._append_text(parts, current_len, "\n")
 
-        # Add OCR text from the first tweet if available
-        ocr_texts = [item.get('ocr_text', '') for item in items if item.get('ocr_text')]
-        if ocr_texts:
-            first_ocr = ocr_texts[0].strip()
-            if first_ocr:
-                if len(first_ocr) > TelegramConfig.OCR_TEXT_MAX_LENGTH:  # Leave room for quoted tweet
-                    first_ocr = first_ocr[:TelegramConfig.OCR_TEXT_MAX_LENGTH] + '...'
-                current_len = self._append_text(parts, current_len, f"\n {first_ocr}\n")
+        # Add text from all tweets in the batch
+        has_added_text = False
+        for item in items:
+            ocr_text = item.get('ocr_text', '').strip()
+            quoted_tweet = item.get('quoted_tweet')
 
-        # Add quoted tweet from the first item if available
-        quoted_tweets = [item.get('quoted_tweet') for item in items if item.get('quoted_tweet')]
-        if quoted_tweets:
-            quoted_tweet = quoted_tweets[0]
-            quote_text = quoted_tweet.get('text', '').strip()
-            quote_handle = quoted_tweet.get('handle', '').lstrip('@')
-            quote_url = quoted_tweet.get('url', '')
+            if not ocr_text and not (quoted_tweet and quoted_tweet.get('text')):
+                continue
 
-            if quote_text:
-                # Truncate quoted text if too long
-                if len(quote_text) > TelegramConfig.QUOTED_TEXT_MAX_LENGTH:
-                    quote_text = quote_text[:TelegramConfig.QUOTED_TEXT_MAX_LENGTH] + '...'
+            # Add separator if this isn't the first text block
+            if has_added_text:
+                current_len = self._append_text(parts, current_len, "\n---\n")
+            
+            has_added_text = True
 
-                # Add handle as a link BEFORE the blockquote (format: 💬 handle\n<blockquote>text</blockquote>)
-                current_len = self._append_text(parts, current_len, "\n\n💬 ")
-                if quote_handle:
-                    handle_offset = current_len
-                    current_len = self._append_text(parts, current_len, quote_handle)
-                    if quote_url:
-                        entities.append(
-                            MessageEntity(
-                                type="text_link",
-                                offset=handle_offset,
-                                length=self._utf16_len(quote_handle),
-                                url=quote_url
+            # Add main OCR text
+            if ocr_text:
+                # Per-tweet limit to prevent overfilling caption
+                per_tweet_limit = TelegramConfig.OCR_TEXT_MAX_LENGTH
+                if len(items) > 1:
+                    per_tweet_limit = max(100, 600 // len(items))
+                
+                if len(ocr_text) > per_tweet_limit:
+                    ocr_text = ocr_text[:per_tweet_limit] + '...'
+                
+                current_len = self._append_text(parts, current_len, f"\n {ocr_text}\n")
+
+            # Add quoted tweet if available for this item
+            if quoted_tweet and quoted_tweet.get('text'):
+                quote_text = quoted_tweet.get('text', '').strip()
+                quote_handle = quoted_tweet.get('handle', '').lstrip('@')
+                quote_url = quoted_tweet.get('url', '')
+
+                if quote_text:
+                    # Truncate quoted text if too long
+                    per_quote_limit = TelegramConfig.QUOTED_TEXT_MAX_LENGTH
+                    if len(items) > 1:
+                        per_quote_limit = max(50, 200 // len(items))
+                    
+                    if len(quote_text) > per_quote_limit:
+                        quote_text = quote_text[:per_quote_limit] + '...'
+
+                    # Add handle link
+                    current_len = self._append_text(parts, current_len, "\n💬 ")
+                    if quote_handle:
+                        handle_offset = current_len
+                        current_len = self._append_text(parts, current_len, quote_handle)
+                        if quote_url:
+                            entities.append(
+                                MessageEntity(
+                                    type="text_link",
+                                    offset=handle_offset,
+                                    length=self._utf16_len(quote_handle),
+                                    url=quote_url
+                                )
                             )
+                    current_len = self._append_text(parts, current_len, "\n")
+
+                    # Quote text in blockquote
+                    quote_offset = current_len
+                    current_len = self._append_text(parts, current_len, quote_text)
+                    
+                    threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
+                    blockquote_type = "expandable_blockquote" if threshold > 0 and len(quote_text) > threshold else "blockquote"
+                    entities.append(
+                        MessageEntity(
+                            type=blockquote_type,
+                            offset=quote_offset,
+                            length=self._utf16_len(quote_text)
                         )
-                current_len = self._append_text(parts, current_len, "\n")
-
-                # Quote text inside blockquote
-                quote_offset = current_len
-                current_len = self._append_text(parts, current_len, quote_text)
-
-                # Use expandable blockquote for long quotes
-                threshold = TelegramConfig.EXPANDABLE_BLOCKQUOTE_THRESHOLD
-                blockquote_type = "expandable_blockquote" if threshold > 0 and len(quote_text) > threshold else "blockquote"
-                entities.append(
-                    MessageEntity(
-                        type=blockquote_type,
-                        offset=quote_offset,
-                        length=self._utf16_len(quote_text)
                     )
-                )
-                current_len = self._append_text(parts, current_len, "\n")
+                    current_len = self._append_text(parts, current_len, "\n")
 
         # Date at the end
         current_len = self._append_text(parts, current_len, f"\n📅 {capture_date_persian}")
@@ -1325,6 +1344,8 @@ class TelegramSuggestedTweetsBot(TelegramBot):
     STATE_IDLE = 'idle'
     STATE_AWAITING_TWEET = 'awaiting_tweet'
     STATE_AWAITING_FEEDBACK = 'awaiting_feedback'
+    STATE_AWAITING_VOICE_MESSAGE = 'awaiting_voice_message'
+    STATE_AWAITING_VOICE_NAME = 'awaiting_voice_name'
 
     def __init__(self, creds, twitter_api, db, time_diff, reference_snapshot, user_tweet_limit):
         super().__init__(creds, db, twitter_api, time_diff, reference_snapshot)
@@ -1336,6 +1357,8 @@ class TelegramSuggestedTweetsBot(TelegramBot):
 
         # Store user feedback category temporarily
         self.user_feedback_category = {}
+        # Store user voice message temporarily
+        self.user_voice_message = {}
 
         # Initialize message queue for rate-limited sending
         self.message_queue = TelegramMessageQueue(self.bot, db=self.db)
@@ -1377,6 +1400,9 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 InlineKeyboardButton("💬 Send Feedback", callback_data="MENU|feedback")
             ],
             [
+                InlineKeyboardButton("🎤 Send your voice", callback_data="MENU|send_voice")
+            ],
+            [
                 InlineKeyboardButton("📊 My Remaining Submissions", callback_data="MENU|remaining")
             ]
         ]
@@ -1407,6 +1433,9 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             elif action == 'feedback':
                 self._show_feedback_categories(query)
 
+            elif action == 'send_voice':
+                self._handle_voice_submission_start(query, chat_id)
+
             elif action == 'remaining':
                 self._show_remaining_submissions(query, user_name)
 
@@ -1432,6 +1461,21 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             "📤 *Submit a Tweet*\n\n"
             "Please send me the tweet URL (twitter.com or x.com link).\n\n"
             "Example: `https://x.com/user/status/123456789`",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def _handle_voice_submission_start(self, query, chat_id):
+        """Set state to await voice message."""
+        self.db.set_state(chat_id, self.STATE_AWAITING_VOICE_MESSAGE)
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        query.edit_message_text(
+            "🎤 *Send your voice*\n\n"
+            "Please type the message you'd like to share with the channel.\n\n"
+            "This will be posted to the suggestions channel with your chosen name.",
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
@@ -1546,6 +1590,9 @@ class TelegramSuggestedTweetsBot(TelegramBot):
                 InlineKeyboardButton("💬 Send Feedback", callback_data="MENU|feedback")
             ],
             [
+                InlineKeyboardButton("🎤 Send your voice", callback_data="MENU|send_voice")
+            ],
+            [
                 InlineKeyboardButton("📊 My Remaining Submissions", callback_data="MENU|remaining")
             ]
         ]
@@ -1562,6 +1609,10 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             self.receive_tweet(update, context)
         elif state == self.STATE_AWAITING_FEEDBACK:
             self.receive_feedback(update, context)
+        elif state == self.STATE_AWAITING_VOICE_MESSAGE:
+            self.receive_voice_message(update, context)
+        elif state == self.STATE_AWAITING_VOICE_NAME:
+            self.receive_voice_name(update, context)
         else:
             # Check if it's a tweet URL - handle it directly
             text = update.message.text.strip()
@@ -1788,5 +1839,105 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             chat_id=chat_id,
             text="✅ Thank you for your feedback!\n\n"
                  "Your message has been sent to the channel admins.",
+            reply_markup=reply_markup
+        )
+
+    def receive_voice_message(self, update, context=None):
+        """Process the text message for 'Send your voice'."""
+        chat_id = str(update.message.chat_id)
+        message = update.message.text.strip()
+
+        if not message:
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text="❌ Please send a text message."
+            )
+            return
+
+        # Store message and move to next state
+        self.user_voice_message[chat_id] = message
+        self.db.set_state(chat_id, self.STATE_AWAITING_VOICE_NAME)
+
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        self.message_queue.send_message(
+            chat_id=chat_id,
+            text="🎤 *Great!*\n\nNow, what name should be shown with your message?\n"
+                 "(e.g., your real name, a pseudonym, or 'Anonymous')",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    def receive_voice_name(self, update, context=None):
+        """Process the name for 'Send your voice' and post to channel."""
+        chat_id = str(update.message.chat_id)
+        name = update.message.text.strip()
+        user_name = self.get_user_name(update) or 'Unknown'
+
+        if not name:
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text="❌ Please send a name."
+            )
+            return
+
+        # Get the stored message
+        message = self.user_voice_message.get(chat_id)
+        
+        # Reset state and clear temporary storage
+        self.db.set_state(chat_id, self.STATE_IDLE)
+        if chat_id in self.user_voice_message:
+            del self.user_voice_message[chat_id]
+
+        if not message:
+            self.message_queue.send_message(
+                chat_id=chat_id,
+                text="❌ Something went wrong. Please try again from the menu."
+            )
+            return
+
+        # Format the final message for the suggestions channel
+        # Iranian time for date
+        now_utc = dt.datetime.now()
+        current_time_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
+        # Use existing utility to get Persian date
+        current_date_persian = covert_tweet_time_to_desired_time(current_time_str, self.time_diff).split(' ')[0]
+        
+        # Channel name from creds (e.g. @Tweets_SUT)
+        main_channel = self.CHANNEL_NAME
+
+        channel_post = (
+            f"🎤 *Your Voice*\n\n"
+            f"\"{message}\"\n\n"
+            f"👤 *By:* {name}\n"
+            f"📅 *Date:* {current_date_persian}\n"
+            f"📢 *Channel:* {main_channel}"
+        )
+
+        # Send to suggestions channel
+        self.message_queue.send_message(
+            chat_id=self.CHAT_ID,
+            text=channel_post,
+            parse_mode='Markdown'
+        )
+
+        # Also log it as a special kind of feedback or just notify admins
+        admin_notification = (
+            f"🎤 New 'Voice' submission from @{user_name}:\n\n"
+            f"Name: {name}\n"
+            f"Message: \"{message}\""
+        )
+        # Note: self.CHAT_ID is the suggestions chat id where admins see suggestions
+        # We already sent the formatted version there.
+
+        # Confirm to user
+        keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="MENU|back")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        self.message_queue.send_message(
+            chat_id=chat_id,
+            text="✅ Your voice has been shared in the suggestions channel!\n\n"
+                 "Thank you for your contribution.",
             reply_markup=reply_markup
         )
