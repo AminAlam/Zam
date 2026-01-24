@@ -1317,6 +1317,7 @@ class TelegramAdminBot(TelegramBot):
                                             text=tweet_text,
                                             disable_web_page_preview=True,
                                             entities=entities_list_converted if entities_list_converted else None,
+                                            parse_mode='HTML' if not entities_list_converted else None,
                                             reply_markup=reply_markup_main
                                         )
 
@@ -1916,12 +1917,17 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         # Channel name from creds (e.g. @Tweets_SUT)
         main_channel = self.CHANNEL_NAME
 
+        # Escape user-provided content to prevent parsing errors
+        safe_message = self._escape_html(message)
+        safe_name = self._escape_html(name)
+        safe_main_channel = self._escape_html(main_channel)
+
         channel_post = (
-            f"🎤 *Your Voice*\n\n"
-            f"\"{message}\"\n\n"
-            f"👤 {name}\n"
+            f"🎤 <b>Your Voice</b>\n\n"
+            f"\"{safe_message}\"\n\n"
+            f"👤 {safe_name}\n"
             f"📅  {current_date_persian}\n"
-            f"{main_channel}"
+            f"{safe_main_channel}"
         )
 
         # Generate a unique ID for this voice message to allow scheduling
@@ -1934,10 +1940,10 @@ class TelegramSuggestedTweetsBot(TelegramBot):
         })
 
         # Send to suggestions channel (sync because we need the message_id to reply with options)
-        sent_messages = self.message_queue.send_message_sync(
+        sent_message = self.message_queue.send_message_sync(
             chat_id=self.CHAT_ID,
             text=channel_post,
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
 
         # Add scheduling buttons as a reply in the suggestions channel
@@ -1946,7 +1952,7 @@ class TelegramSuggestedTweetsBot(TelegramBot):
             chat_id=self.CHAT_ID,
             text=markup_text,
             reply_markup=reply_markup,
-            reply_to_message_id=sent_messages.message_id
+            reply_to_message_id=sent_message.message_id
         )
 
         # Confirm to user
