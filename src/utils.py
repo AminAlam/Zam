@@ -28,6 +28,7 @@ def load_credentials():
         'MAIN_CHANNEL_CHAT_ID': os.getenv('MAIN_CHANNEL_CHAT_ID', ''),
         'ADMIN_CHAT_ID': os.getenv('ADMIN_CHAT_ID', ''),
         'SUGGESTIONS_CHAT_ID': os.getenv('SUGGESTIONS_CHAT_ID', ''),
+        'SUGGESTIONS_BOT_ID': os.getenv('SUGGESTIONS_BOT_ID', ''),
         'CHANNEL_NAME': os.getenv('CHANNEL_NAME', ''),
         'ADMIN_IDS': admin_ids,
     }
