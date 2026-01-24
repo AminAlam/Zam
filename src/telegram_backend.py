@@ -722,6 +722,10 @@ class TelegramBot:
         query_dict = query.to_dict()
         chat_id = query_dict['message']['chat']['id']
 
+        # Check if this bot is responsible for this chat (Admin vs Suggestions)
+        # This prevents "Message_id_invalid" errors when both bots receive the same callback
+        is_responsible = hasattr(self, 'CHAT_ID') and self.CHAT_ID and str(chat_id) == str(self.CHAT_ID)
+
         try:
             tg_text = query.message.reply_to_message.text
             entities = query.to_dict()['message']['reply_to_message']['entities']
@@ -748,13 +752,17 @@ class TelegramBot:
             button_list = [InlineKeyboardButton("Cancel ❌", callback_data=f"CANCEL|{tweet_id}")]
             reply_markup = InlineKeyboardMarkup(self.build_menu(button_list, n_cols=1))
             success_message = f"Tweet has been scheduled for {desired_time_persian} (Iran time-zone).\nYou can edit the text or caption of the message till the sending time.\nAlso, you can cancel it via Cancel button."
-            query.edit_message_text(text=success_message, reply_markup=reply_markup)
+            
+            if is_responsible:
+                query.edit_message_text(text=success_message, reply_markup=reply_markup)
 
         elif query_type == 'CANCEL':
             tweet_id = query_text[1]
             reply_markup, markup_text = self.make_time_options(tweet_id)
             self.db.set_sending_time_for_tweet_in_line(tweet_id, sending_time=None, tweet_text=tg_text, entities=None, query=None)
-            query.edit_message_text(text=markup_text, reply_markup=reply_markup)
+            
+            if is_responsible:
+                query.edit_message_text(text=markup_text, reply_markup=reply_markup)
 
         elif query_type == 'SENT':
             tweet_id = query_text[2]
@@ -1331,7 +1339,13 @@ class TelegramAdminBot(TelegramBot):
 
                                     # Queue the edit (async is fine here)
                                     if query and 'message' in query:
-                                        self.message_queue.edit_message_text(
+                                        # Use suggestions bot queue if the message was sent by it
+                                        # (Admin bot cannot edit messages sent by Suggestions bot)
+                                        target_queue = self.message_queue
+                                        if self.suggestions_bot and str(query['message']['chat']['id']) == str(self.suggestions_bot.CHAT_ID):
+                                            target_queue = self.suggestions_bot.message_queue
+
+                                        target_queue.edit_message_text(
                                             chat_id=query['message']['chat']['id'],
                                             message_id=query['message']['message_id'],
                                             text=success_message,
