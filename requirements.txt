@@ -1,5 +1,8 @@
 # Telegram Bot
 python-telegram-bot==13.15
+# apscheduler (transitive dep of python-telegram-bot 13.x) imports pkg_resources
+# at load time, which setuptools>=81 removed. Pin setuptools until we upgrade PTB.
+setuptools<81
 
 # Environment and Configuration
 python-dotenv

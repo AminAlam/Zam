@@ -36,6 +36,9 @@ dependencies = [
     # Local tweetcapture package
     "tweetcapture",
     "beautifulsoup4>=4.14.3",
+    # apscheduler 3.x (transitive via python-telegram-bot 13.15) imports
+    # pkg_resources at module load; setuptools>=81 removed that API.
+    "setuptools<81",
 ]
 
 [project.optional-dependencies]
