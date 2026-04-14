@@ -168,8 +168,15 @@ class TweetCapture:
             if len(elements) == 1:
                 driver.execute_script("window.scrollTo(0, 0);")
                 x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", elements[0])
+                if width <= 0 or height <= 0:
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elements[0])
+                    await sleep(0.5)
+                    x, y, width, height = driver.execute_script("var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];", elements[0])
                 await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
-                if scale != 1.0:
+                if width <= 0 or height <= 0:
+                    print(f"[WARN] Tweet element has invalid dimensions {width}x{height}, using full viewport screenshot")
+                    driver.save_screenshot(path)
+                elif scale != 1.0:
                     driver.save_screenshot(path)
                 else:
                     elements[0].screenshot(path)
@@ -432,15 +439,14 @@ class TweetCapture:
 
     # Return: (elements, main_element_index)
     def __get_tweets(self, driver, show_parents, parent_tweets_limit, show_mentions_count):
-        els = driver.find_elements(By.XPATH, "(//ancestor::article)/..")
+        els = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="tweet"]')
         elements = []
         for element in els:
-            if len(element.find_elements(By.XPATH, ".//article[contains(@data-testid, 'tweet')]")) > 0:
-                source = element.get_attribute("innerHTML")
-                # sponsored tweet pass
-                if source.find("M19.498 3h-15c-1.381 0-2.5 1.12-2.5 2.5v13c0 1.38") != -1 or source.find('css-1dbjc4n r-1s2bzr4" id="id__jrl5cg7nxl"') != -1:
-                    continue
-                elements.append(element)
+            source = element.get_attribute("innerHTML")
+            # sponsored tweet pass
+            if source.find("M19.498 3h-15c-1.381 0-2.5 1.12-2.5 2.5v13c0 1.38") != -1 or source.find('css-1dbjc4n r-1s2bzr4" id="id__jrl5cg7nxl"') != -1:
+                continue
+            elements.append(element)
         length = len(elements)
         if length > 0:
             if length == 1:
@@ -1266,11 +1272,29 @@ class TweetCapture:
                     "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];",
                     elements[0]
                 )
+                print(f"[DEBUG] article rect before screenshot: x={x} y={y} w={width} h={height}")
+                if width <= 0 or height <= 0:
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elements[0])
+                    await sleep(0.5)
+                    x, y, width, height = driver.execute_script(
+                        "var rect = arguments[0].getBoundingClientRect(); return [rect.x, rect.y, rect.width, rect.height];",
+                        elements[0]
+                    )
+                    print(f"[DEBUG] article rect after scrollIntoView: x={x} y={y} w={width} h={height}")
                 await sleep(TweetCaptureConfig.SCREENSHOT_WAIT)
-                if scale != 1.0:
+                if width <= 0 or height <= 0:
+                    print(f"[WARN] Tweet element has invalid dimensions {width}x{height}, using full viewport screenshot")
+                    driver.save_screenshot(screenshot_path)
+                elif scale != 1.0:
                     driver.save_screenshot(screenshot_path)
                 else:
                     elements[0].screenshot(screenshot_path)
+                    try:
+                        import os as _os
+                        _sz = _os.path.getsize(screenshot_path)
+                        print(f"[DEBUG] screenshot written: {screenshot_path} size={_sz} bytes")
+                    except Exception as _e:
+                        print(f"[DEBUG] screenshot size check failed: {_e}")
                 if radius > 0 or scale != 1.0:
                     im = Image.open(screenshot_path)
                     if scale != 1.0:

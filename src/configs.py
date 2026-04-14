@@ -102,7 +102,7 @@ class TwitterConfig:
         '--no-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--window-size=600,1200',
+        '--window-size=1200,1600',
         '--hide-scrollbars',
         '--disable-extensions',
         '--disable-infobars',
