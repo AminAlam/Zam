@@ -90,9 +90,14 @@ class TelegramMessageQueue:
         """
         Send a media group synchronously (bypasses queue).
         Use only when you need the return value immediately.
+
+        Retries on NetworkError only, never on TimedOut: a large media upload
+        (e.g. video) may have already reached Telegram by the time we time out,
+        and retrying would send a duplicate.
         """
         return self._send_with_retry(
-            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=TelegramConfig.DEFAULT_TIMEOUT, **kwargs)
+            lambda: self.bot.sendMediaGroup(chat_id=chat_id, media=media, timeout=TelegramConfig.MEDIA_UPLOAD_TIMEOUT, **kwargs),
+            retry_on_timeout=False,
         )
 
     def _sender_loop(self):
@@ -146,16 +151,20 @@ class TelegramMessageQueue:
                 if self.db:
                     self.db.error_log(e)
 
-    def _send_with_retry(self, send_func):
+    def _send_with_retry(self, send_func, retry_on_timeout=True):
         """
         Execute a send function with exponential backoff retry.
-        
+
         Args:
             send_func: Callable that performs the actual send
-            
+            retry_on_timeout: If False, TimedOut propagates immediately instead
+                of being retried. Use this for non-idempotent sends like media
+                groups, where a client-side timeout may follow a successful
+                upload and retrying would duplicate the message.
+
         Returns:
             The result of send_func if successful
-            
+
         Raises:
             The last exception if all retries fail
         """
@@ -169,10 +178,21 @@ class TelegramMessageQueue:
                 wait_time = e.retry_after + 1
                 print(f"Rate limited, waiting {wait_time}s...")
                 time.sleep(wait_time)
-            except (NetworkError, TimedOut) as e:
+            except TimedOut as e:
+                if not retry_on_timeout:
+                    print(f"Timed out (no retry): {e}")
+                    raise
                 last_exception = e
                 if attempt < self.max_retries - 1:
-                    # Exponential backoff with jitter
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    print(e)
+                    print(f"Timeout, retry {attempt + 1}/{self.max_retries} in {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+            except NetworkError as e:
+                last_exception = e
+                if attempt < self.max_retries - 1:
                     wait_time = (2 ** attempt) + random.uniform(0, 1)
                     print(e)
                     print(f"Network error, retry {attempt + 1}/{self.max_retries} in {wait_time:.1f}s...")
@@ -267,13 +287,17 @@ class TelegramBot:
         """
         username = tweet_data['username']
         tweet_url = tweet_data['tweet_url']
-        capture_date_persian = tweet_data['capture_date_persian']
+        footer_date = tweet_data.get('tweet_time_persian') or tweet_data.get('capture_date_persian', '')
         ocr_text = tweet_data.get('ocr_text', '').strip()
+        if tweet_data.get('video_thumbnail_only') and ocr_text:
+            ocr_text = "🎬 ویدیو\n\n" + ocr_text
+        elif tweet_data.get('video_thumbnail_only'):
+            ocr_text = "🎬 ویدیو"
         quoted_tweet = tweet_data.get('quoted_tweet')
         quote_text = quoted_tweet.get('text', '').strip() if quoted_tweet else ''
 
         # First attempt: generate HTML with full text
-        message = self._build_html_message(username, tweet_url, capture_date_persian, ocr_text, quoted_tweet)
+        message = self._build_html_message(username, tweet_url, footer_date, ocr_text, quoted_tweet)
 
         print(f"[DEBUG] format_tweet_message: message_len={len(message)}, ocr_len={len(ocr_text)}, quote_len={len(quote_text)}")
 
@@ -306,13 +330,13 @@ class TelegramBot:
             quoted_tweet = {**quoted_tweet, 'text': quote_text}
 
         # Regenerate with truncated text
-        message = self._build_html_message(username, tweet_url, capture_date_persian, ocr_text, quoted_tweet)
+        message = self._build_html_message(username, tweet_url, footer_date, ocr_text, quoted_tweet)
 
         print(f"[DEBUG] format_tweet_message after truncation: message_len={len(message)}")
 
         return message, None
 
-    def _build_html_message(self, username, tweet_url, capture_date_persian, ocr_text, quoted_tweet):
+    def _build_html_message(self, username, tweet_url, footer_date, ocr_text, quoted_tweet):
         """Build the HTML formatted message."""
         parts = []
 
@@ -350,8 +374,8 @@ class TelegramBot:
                 else:
                     parts.append(f'\n<blockquote>💬 {quote_attribution}\n\n{self._escape_html(quote_text)}</blockquote>\n')
 
-        # Date at the end
-        parts.append(f'\n📅 {self._escape_html(capture_date_persian)}')
+        # Date at the end (tweet post time in Tehran tz if available, else capture date)
+        parts.append(f'\n📅 {self._escape_html(footer_date)}')
         parts.append(f'\n{self._escape_html(self.CHANNEL_NAME)}')
 
         return "".join(parts)
@@ -504,8 +528,9 @@ class TelegramBot:
 
             # Single tweet processing
             tweet_id = tweet_data['tweet_id']
-            screenshot_path = tweet_data['screenshot_path']
-            video_paths = tweet_data.get('video_paths', [])
+            screenshot_path = tweet_data.get('screenshot_path')
+            image_paths = tweet_data.get('image_paths', []) or []
+            video_paths = tweet_data.get('video_paths', []) or []
             chat_id = tweet_data.get('chat_id')
             user_name = tweet_data.get('user_name', '')
             bot_type = tweet_data.get('bot_type', 'suggestions')
@@ -521,23 +546,34 @@ class TelegramBot:
             # Format the message
             tg_text, entities = self.format_tweet_message(tweet_data)
 
-            # Create media array with the screenshot and any videos
-            media_list = [[screenshot_path, 'photo']]
+            # Build media list: screenshot (legacy path) + API images + videos
+            media_list = []
+            if screenshot_path and os.path.exists(screenshot_path):
+                media_list.append([screenshot_path, 'photo'])
+            for p in image_paths:
+                if p and os.path.exists(p):
+                    media_list.append([p, 'photo'])
+            for p in video_paths:
+                if p and os.path.exists(p):
+                    media_list.append([p, 'video'])
 
-            # Add videos to media list (they will be sent as a media group)
-            for video_path in video_paths:
-                if video_path and os.path.exists(video_path):
-                    media_list.append([video_path, 'video'])
+            print(f"[DEBUG] on_captured_tweet: entities={entities}, media_count={len(media_list)}, source={tweet_data.get('capture_source')}")
 
-            media_array = self.make_media_array(tg_text, media_list, entities=entities)
-            print(f"[DEBUG] on_captured_tweet: entities={entities}")
-
-            # Send to the appropriate channel (sync because we need the message_id)
-            sent_messages = self.message_queue.send_media_group_sync(
-                chat_id=self.CHAT_ID,
-                media=media_array
-            )
-            sent_message = sent_messages[0]
+            if not media_list:
+                # Text-only tweet: send as plain HTML message
+                sent_message = self.message_queue.send_message_sync(
+                    chat_id=self.CHAT_ID,
+                    text=tg_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            else:
+                media_array = self.make_media_array(tg_text, media_list, entities=entities)
+                sent_messages = self.message_queue.send_media_group_sync(
+                    chat_id=self.CHAT_ID,
+                    media=media_array
+                )
+                sent_message = sent_messages[0]
 
             # Add time selection buttons
             reply_markup, markup_text = self.make_time_options(tweet_id)
@@ -579,6 +615,14 @@ class TelegramBot:
                     chat_id=chat_id,
                     text=notification_text
                 )
+
+            # Best-effort cleanup of local media files after a successful send
+            for path in [screenshot_path] + list(image_paths) + list(video_paths):
+                if path and not path.startswith("http") and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError as cleanup_err:
+                        print(f"[DEBUG] cleanup skip {path}: {cleanup_err}")
 
             return True
 

@@ -39,6 +39,10 @@ dependencies = [
     # apscheduler 3.x (transitive via python-telegram-bot 13.15) imports
     # pkg_resources at module load; setuptools>=81 removed that API.
     "setuptools<81",
+    # ScrapeBadger capture path: yt-dlp for Twitter video downloads,
+    # tzdata so zoneinfo("Asia/Tehran") works on slim container images.
+    "yt-dlp>=2025.1.1",
+    "tzdata",
 ]
 
 [project.optional-dependencies]

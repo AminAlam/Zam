@@ -23,7 +23,8 @@ class TelegramConfig:
     """Configuration for Telegram bot functionality."""
 
     # API timeout settings
-    DEFAULT_TIMEOUT = 30  # seconds
+    DEFAULT_TIMEOUT = 30          # seconds — text messages
+    MEDIA_UPLOAD_TIMEOUT = 300    # seconds — video uploads via sendMediaGroup
 
     # Message limits
     MAX_CAPTION_LENGTH = 1024  # Telegram caption character limit
@@ -177,6 +178,23 @@ class MainConfig:
     TWEETS_TO_PRESERVE_MAX = 5000
     USER_TWEET_LIMIT_MIN = 0
     USER_TWEET_LIMIT_MAX = 120
+
+
+# =============================================================================
+# SCRAPEBADGER CONFIGURATION
+# =============================================================================
+class ScrapeBadgerConfig:
+    """Configuration for the ScrapeBadger tweet-fetching API."""
+
+    BASE_URL = "https://scrapebadger.com/v1"
+    TWEET_ENDPOINT = "/twitter/tweets/tweet/{tweet_id}"
+
+    REQUEST_TIMEOUT = 20          # seconds — API metadata call
+    MAX_RETRIES = 3
+    RETRY_BACKOFF_BASE = 1.0      # exponential: 1, 2, 4 seconds
+
+    MEDIA_DOWNLOAD_TIMEOUT = 60   # seconds — photo/thumbnail downloads
+    MEDIA_DIR_NAME = "api_media"  # sibling of screenshots/ and videos/
 
 
 # =============================================================================
