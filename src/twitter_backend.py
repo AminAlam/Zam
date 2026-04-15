@@ -405,18 +405,29 @@ class TwitterClient:
 
         return image_paths, video_paths, thumbnail_only
 
+    VERIFIED_BADGE = "✔️"
+
+    def _decorate_author(self, display_name, response):
+        if response.get("user_is_blue_verified"):
+            return f"{display_name} {self.VERIFIED_BADGE}"
+        return display_name
+
     def _build_quoted_tweet_from_api(self, quoted_response):
         if not quoted_response:
             return None
         handle = quoted_response.get("username") or ""
-        author = quoted_response.get("user_name") or handle
+        display_name = quoted_response.get("user_name") or handle
+        decorated = self._decorate_author(display_name, quoted_response)
         text = self._clean_tweet_text(quoted_response)
         tweet_id = quoted_response.get("id") or quoted_response.get("id_str") or ""
         url = f"https://twitter.com/{handle}/status/{tweet_id}" if handle and tweet_id else ""
         return {
             "text": text,
-            "author": author,
-            "handle": f"@{handle}" if handle else "",
+            "author": decorated,
+            # The formatter renders `handle` as the link label on the quote;
+            # populate it with the (decorated) display name so viewers see the
+            # author's actual name rather than their @handle.
+            "handle": decorated,
             "url": url,
         }
 
@@ -474,7 +485,11 @@ class TwitterClient:
             tweet_time_persian = None
 
         main_text = self._clean_tweet_text(response)
-        resp_username = response.get("username") or username
+        # The formatter uses `username` as the link label in the header, so
+        # prefer the author's display name (user_name) over their handle, and
+        # append a verified badge when the account is blue-verified.
+        display_name = response.get("user_name") or response.get("username") or username
+        resp_username = self._decorate_author(display_name, response)
 
         print(
             f"[DEBUG] capture_source=scrapebadger tweet_id={tweet_id} "
