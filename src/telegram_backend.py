@@ -616,14 +616,10 @@ class TelegramBot:
                     text=notification_text
                 )
 
-            # Best-effort cleanup of local media files after a successful send
-            for path in [screenshot_path] + list(image_paths) + list(video_paths):
-                if path and not path.startswith("http") and os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError as cleanup_err:
-                        print(f"[DEBUG] cleanup skip {path}: {cleanup_err}")
-
+            # NOTE: do NOT delete local media files here. Their paths are stored
+            # in tweets_line and re-read by check_for_tweet_in_line when the
+            # admin approves and the scheduler forwards the post to the main
+            # channel. Cleanup happens there via deleted_snapshots().
             return True
 
         except Exception as e:
@@ -1347,6 +1343,26 @@ class TelegramAdminBot(TelegramBot):
                                                 length=entity['length']
                                             )
                                         entities_list_converted.append(converted_format)
+
+                                    # Filter out media paths whose local files no longer exist.
+                                    # This can happen if the disk volume was wiped, or if an
+                                    # earlier bug deleted files prematurely. Without filtering,
+                                    # make_media_array's open(path,'rb') raises and the whole
+                                    # tweet gets stuck in tweets_line forever.
+                                    if media_list:
+                                        filtered_media = []
+                                        for m in media_list:
+                                            if not (isinstance(m, (list, tuple)) and len(m) >= 2):
+                                                continue
+                                            path = m[0]
+                                            if isinstance(path, str) and path.startswith("http"):
+                                                filtered_media.append(list(m))
+                                                continue
+                                            if isinstance(path, str) and os.path.exists(path):
+                                                filtered_media.append(list(m))
+                                            else:
+                                                print(f"[WARN] scheduler: missing media {path}, dropping")
+                                        media_list = filtered_media
 
                                     # Send via message queue (sync to ensure delivery before cleanup)
                                     if media_list:
