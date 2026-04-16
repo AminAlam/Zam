@@ -330,22 +330,31 @@ class TwitterClient:
 
     @staticmethod
     def _clean_tweet_text(response):
-        """Pull user-visible text out of a ScrapeBadger response, stripping
-        trailing t.co media URLs that Twitter auto-appends for attached media."""
-        text = response.get("full_text") or response.get("text") or ""
+        """Pull user-visible text out of a ScrapeBadger response.
+
+        Prefers `full_text` (the complete tweet) over `text` (the legacy
+        280-char truncated form). ScrapeBadger's `display_text_range` is
+        computed against the short `text` field, so slicing `full_text` by it
+        would truncate long tweets mid-word — we only apply the slice when
+        falling back to `text`. In both cases we strip trailing t.co media
+        URLs with a regex.
+        """
+        full_text = response.get("full_text")
+        if full_text:
+            text = full_text
+        else:
+            text = response.get("text") or ""
+            if text:
+                dtr = response.get("display_text_range")
+                if isinstance(dtr, (list, tuple)) and len(dtr) == 2:
+                    try:
+                        start, end = int(dtr[0]), int(dtr[1])
+                        if 0 <= start < end <= len(text):
+                            text = text[start:end]
+                    except (TypeError, ValueError):
+                        pass
         if not text:
             return ""
-        # Twitter's display_text_range marks the user-visible span within full_text.
-        # When a tweet has attached media, the range excludes the trailing t.co link.
-        dtr = response.get("display_text_range")
-        if isinstance(dtr, (list, tuple)) and len(dtr) == 2:
-            try:
-                start, end = int(dtr[0]), int(dtr[1])
-                if 0 <= start < end <= len(text):
-                    text = text[start:end]
-            except (TypeError, ValueError):
-                pass
-        # Belt and suspenders: strip any remaining t.co URLs anywhere in the text.
         text = re.sub(r"https?://t\.co/\w+", "", text)
         return text.strip()
 
