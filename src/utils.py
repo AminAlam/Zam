@@ -90,21 +90,30 @@ def parse_text(text):
 
 def deleted_snapshots(media_list):
     """
-    Delete local screenshot files.
-    
+    Delete local media files (photos and videos) after a post has been
+    forwarded to the main channel.
+
     Args:
-        media_list: List of media items
+        media_list: List of [path, type] media items
     """
     if not media_list:
         return
 
     for media in media_list:
-        if len(media) >= 2 and media[1] == 'photo':
-            if not media[0].startswith("http"):
-                try:
-                    os.remove(media[0])
-                except Exception as e:
-                    print(f"Failed to delete screenshot: {e}")
+        if len(media) < 2:
+            continue
+        media_type = media[1]
+        media_path = media[0]
+        if media_type not in ('photo', 'video', 'animated_gif'):
+            continue
+        if not isinstance(media_path, str) or media_path.startswith("http"):
+            continue
+        try:
+            os.remove(media_path)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Failed to delete media file {media_path}: {e}")
 
 
 class telegraph:

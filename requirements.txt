@@ -35,6 +35,10 @@ pytesseract>=0.3.10
 # HTML Parsing
 beautifulsoup4>=4.14.3
 
+# ScrapeBadger capture path
+yt-dlp>=2025.1.1
+tzdata
+
 # Testing (dev dependencies)
 pytest>=7.0.0
 pytest-cov>=4.0.0

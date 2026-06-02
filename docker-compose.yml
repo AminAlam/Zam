@@ -50,6 +50,7 @@ services:
     volumes:
       - screenshots:/app/screenshots
       - videos:/app/videos
+      - api_media:/app/api_media
       # Mount source code for development (rebuild image for tweetcapture changes)
       - ./src:/app/src
       # Debug-mode NDJSON logs (host -> container)
@@ -68,6 +69,7 @@ volumes:
   postgres_data:
   screenshots:
   videos:
+  api_media:
   x11_socket:
   pulse_socket:
 

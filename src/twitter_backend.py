@@ -21,7 +21,16 @@ print("[DEBUG] twitter_backend.py module loaded")
 # Import tweetcapture (installed via pip install -e in Dockerfile)
 from tweetcapture import TweetCapture
 
-from .configs import TwitterConfig
+from .configs import ScrapeBadgerConfig, TwitterConfig
+from .scrapebadger_client import ScrapeBadgerClient, ScrapeBadgerError
+from .video_downloader import VideoDownloadError, download_tweet_videos
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python < 3.9 fallback — project is on 3.11 so this is defensive only
+    ZoneInfo = None
+
+_TEHRAN_TZ = ZoneInfo("Asia/Tehran") if ZoneInfo else None
 
 
 class TwitterClient:
@@ -44,14 +53,18 @@ class TwitterClient:
         """
         self.db = db
         self.telegram_callback = telegram_callback
-        self.screenshots_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', TwitterConfig.SCREENSHOTS_DIR_NAME)
-        self.videos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', TwitterConfig.VIDEOS_DIR_NAME)
+        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+        self.screenshots_dir = os.path.join(base_dir, TwitterConfig.SCREENSHOTS_DIR_NAME)
+        self.videos_dir = os.path.join(base_dir, TwitterConfig.VIDEOS_DIR_NAME)
+        self.api_media_dir = os.path.join(base_dir, ScrapeBadgerConfig.MEDIA_DIR_NAME)
 
         # Ensure directories exist
-        if not os.path.exists(self.screenshots_dir):
-            os.makedirs(self.screenshots_dir)
-        if not os.path.exists(self.videos_dir):
-            os.makedirs(self.videos_dir)
+        for d in (self.screenshots_dir, self.videos_dir, self.api_media_dir):
+            if not os.path.exists(d):
+                os.makedirs(d)
+
+        # Lazily-initialised ScrapeBadger client (only built when the API path is used)
+        self._scrapebadger_client = None
 
         # Video capture settings
         self.enable_video_capture = enable_video_capture
@@ -277,14 +290,244 @@ class TwitterClient:
 
     def capture_tweet(self, tweet_url):
         """
-        Capture a tweet screenshot and videos, return metadata.
-        
-        Args:
-            tweet_url: URL of the tweet to capture
-            
-        Returns:
-            dict with screenshot_path, video_paths, username, tweet_id, capture_time, tweet_url
-            or None if capture fails
+        Capture a tweet and return metadata.
+
+        Dispatches between the ScrapeBadger API path and the legacy Chromium
+        screenshot path based on ZAM_CAPTURE_METHOD. If the API path fails,
+        automatically falls back to the screenshot path so the queue keeps moving.
+        """
+        method = os.environ.get("ZAM_CAPTURE_METHOD", "scrapebadger").lower()
+        if method == "scrapebadger":
+            try:
+                return self._capture_tweet_via_scrapebadger(tweet_url)
+            except ScrapeBadgerError as e:
+                print(f"[WARN] ScrapeBadger failed ({e}); falling back to screenshot method")
+                try:
+                    self.db.error_log(e)
+                except Exception:
+                    pass
+                return self._capture_tweet_via_screenshot(tweet_url)
+        return self._capture_tweet_via_screenshot(tweet_url)
+
+    def _get_scrapebadger_client(self):
+        if self._scrapebadger_client is None:
+            self._scrapebadger_client = ScrapeBadgerClient()
+        return self._scrapebadger_client
+
+    @staticmethod
+    def _parse_tweet_created_at(created_at):
+        """Parse ScrapeBadger's Twitter-legacy `created_at` string into a Tehran-local dt."""
+        if not created_at:
+            return None
+        try:
+            dt_utc = dt.datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
+        except ValueError as e:
+            print(f"[WARN] could not parse created_at '{created_at}': {e}")
+            return None
+        if _TEHRAN_TZ is None:
+            return dt_utc
+        return dt_utc.astimezone(_TEHRAN_TZ)
+
+    @staticmethod
+    def _clean_tweet_text(response):
+        """Pull user-visible text out of a ScrapeBadger response.
+
+        Prefers `full_text` (the complete tweet) over `text` (the legacy
+        280-char truncated form). ScrapeBadger's `display_text_range` is
+        computed against the short `text` field, so slicing `full_text` by it
+        would truncate long tweets mid-word — we only apply the slice when
+        falling back to `text`. In both cases we strip trailing t.co media
+        URLs with a regex.
+        """
+        full_text = response.get("full_text")
+        if full_text:
+            text = full_text
+        else:
+            text = response.get("text") or ""
+            if text:
+                dtr = response.get("display_text_range")
+                if isinstance(dtr, (list, tuple)) and len(dtr) == 2:
+                    try:
+                        start, end = int(dtr[0]), int(dtr[1])
+                        if 0 <= start < end <= len(text):
+                            text = text[start:end]
+                    except (TypeError, ValueError):
+                        pass
+        if not text:
+            return ""
+        text = re.sub(r"https?://t\.co/\w+", "", text)
+        return text.strip()
+
+    def _download_tweet_media(self, response, normalized_url, tweet_id, dest_prefix):
+        """Download photos (via ScrapeBadger) and videos (via yt-dlp) for a tweet.
+
+        Returns a tuple ``(image_paths, video_paths, thumbnail_only)``. Used for
+        both the main tweet and the quoted tweet so quote media also reaches
+        Telegram.
+        """
+        client = self._get_scrapebadger_client()
+        media_items = response.get("media") or []
+
+        image_paths = []
+        video_paths = []
+        thumbnail_only = False
+
+        has_video_media = any(
+            (item.get("type") or "").lower() in ("video", "animated_gif") for item in media_items
+        )
+        if has_video_media:
+            try:
+                video_paths = download_tweet_videos(normalized_url, self.videos_dir, dest_prefix)
+            except VideoDownloadError as e:
+                print(f"[WARN] yt-dlp failed for {dest_prefix}: {e}")
+                video_paths = []
+            if not video_paths:
+                thumbnail_only = True
+                print(f"[WARN] no video downloaded for {dest_prefix}; falling back to thumbnail")
+
+        for idx, item in enumerate(media_items):
+            item_type = (item.get("type") or "photo").lower()
+            if item_type in ("video", "animated_gif"):
+                if video_paths:
+                    continue  # already downloaded via yt-dlp
+                preview = item.get("preview_image_url") or item.get("url")
+                if not preview:
+                    continue
+                dest = os.path.join(self.api_media_dir, f"{dest_prefix}_{idx}_thumb.jpg")
+                try:
+                    client.download_media(preview, dest)
+                    image_paths.append(dest)
+                except ScrapeBadgerError as e:
+                    print(f"[WARN] thumbnail download failed: {e}")
+                continue
+
+            # Photo (or unspecified)
+            photo_url = item.get("url")
+            if not photo_url:
+                continue
+            dest = os.path.join(self.api_media_dir, f"{dest_prefix}_{idx}.jpg")
+            try:
+                client.download_media(photo_url, dest)
+                image_paths.append(dest)
+            except ScrapeBadgerError as e:
+                print(f"[WARN] photo download failed: {e}")
+
+        return image_paths, video_paths, thumbnail_only
+
+    VERIFIED_BADGE = "✔️"
+
+    def _decorate_author(self, display_name, response):
+        if response.get("user_is_blue_verified"):
+            return f"{display_name} {self.VERIFIED_BADGE}"
+        return display_name
+
+    def _build_quoted_tweet_from_api(self, quoted_response):
+        if not quoted_response:
+            return None
+        handle = quoted_response.get("username") or ""
+        display_name = quoted_response.get("user_name") or handle
+        decorated = self._decorate_author(display_name, quoted_response)
+        text = self._clean_tweet_text(quoted_response)
+        tweet_id = quoted_response.get("id") or quoted_response.get("id_str") or ""
+        url = f"https://twitter.com/{handle}/status/{tweet_id}" if handle and tweet_id else ""
+        return {
+            "text": text,
+            "author": decorated,
+            # The formatter renders `handle` as the link label on the quote;
+            # populate it with the (decorated) display name so viewers see the
+            # author's actual name rather than their @handle.
+            "handle": decorated,
+            "url": url,
+        }
+
+    def _capture_tweet_via_scrapebadger(self, tweet_url):
+        parsed = self.parse_tweet_url(tweet_url)
+        if not parsed:
+            return None
+
+        username = parsed["username"]
+        tweet_id = parsed["tweet_id"]
+        normalized_url = self.normalize_tweet_url(tweet_url)
+
+        client = self._get_scrapebadger_client()
+        print(f"[DEBUG] _capture_tweet_via_scrapebadger called, tweet_id={tweet_id}")
+        response = client.fetch_tweet(tweet_id)
+
+        image_paths, video_paths, video_thumbnail_only = self._download_tweet_media(
+            response, normalized_url, tweet_id, dest_prefix=tweet_id
+        )
+
+        # Resolve quoted tweet via a second API call (best-effort). Quote media
+        # gets appended to the outgoing media list so the Telegram post contains
+        # both the main tweet's and the quoted tweet's photos/videos.
+        quoted_tweet = None
+        quoted_id = response.get("quoted_status_id")
+        if quoted_id:
+            try:
+                quoted_response = client.fetch_tweet(quoted_id)
+                quoted_tweet = self._build_quoted_tweet_from_api(quoted_response)
+                quoted_username = quoted_response.get("username") or ""
+                quoted_handle = quoted_username
+                quoted_norm_url = (
+                    f"https://twitter.com/{quoted_handle}/status/{quoted_id}" if quoted_handle else normalized_url
+                )
+                q_imgs, q_vids, q_thumb_only = self._download_tweet_media(
+                    quoted_response, quoted_norm_url, quoted_id, dest_prefix=f"{tweet_id}_quoted_{quoted_id}"
+                )
+                image_paths.extend(q_imgs)
+                video_paths.extend(q_vids)
+                if q_thumb_only and not video_thumbnail_only:
+                    video_thumbnail_only = True
+            except Exception as e:
+                print(f"[WARN] quoted tweet fetch/media failed for {quoted_id}: {e}")
+
+        # Timestamps
+        capture_time = dt.datetime.now()
+        capture_date_persian = JalaliDate(capture_time).strftime("%Y/%m/%d")
+
+        tweet_dt_local = self._parse_tweet_created_at(response.get("created_at"))
+        if tweet_dt_local is not None:
+            tweet_date_persian = JalaliDate(tweet_dt_local).strftime("%Y/%m/%d")
+            tweet_time_str = tweet_dt_local.strftime("%H:%M")
+            tweet_time_persian = f"{tweet_date_persian} {tweet_time_str}"
+        else:
+            tweet_time_persian = None
+
+        main_text = self._clean_tweet_text(response)
+        # The formatter uses `username` as the link label in the header, so
+        # prefer the author's display name (user_name) over their handle, and
+        # append a verified badge when the account is blue-verified.
+        display_name = response.get("user_name") or response.get("username") or username
+        resp_username = self._decorate_author(display_name, response)
+
+        print(
+            f"[DEBUG] capture_source=scrapebadger tweet_id={tweet_id} "
+            f"photos={len(image_paths)} videos={len(video_paths)} text_len={len(main_text)}"
+        )
+
+        return {
+            "screenshot_path": None,
+            "image_paths": image_paths,
+            "video_paths": video_paths,
+            "username": resp_username,
+            "tweet_id": tweet_id,
+            "capture_time": capture_time,
+            "capture_date_persian": capture_date_persian,
+            "tweet_time_persian": tweet_time_persian,
+            "tweet_url": normalized_url,
+            "has_videos": bool(video_paths),
+            "ocr_author": "",
+            "ocr_text": main_text,
+            "quoted_tweet": quoted_tweet,
+            "video_thumbnail_only": video_thumbnail_only,
+            "capture_source": "scrapebadger",
+        }
+
+    def _capture_tweet_via_screenshot(self, tweet_url):
+        """
+        Legacy Chromium-based capture: takes a screenshot of the tweet article
+        and (optionally) records inline videos via Xvfb. Kept for fallback when
+        ScrapeBadger is unavailable or when ZAM_CAPTURE_METHOD=screenshot.
         """
         parsed = self.parse_tweet_url(tweet_url)
         if not parsed:
@@ -357,16 +600,20 @@ class TwitterClient:
 
                 return {
                     'screenshot_path': screenshot_path,
+                    'image_paths': [],
                     'video_paths': video_paths,
                     'username': username,
                     'tweet_id': tweet_id,
                     'capture_time': capture_time,
                     'capture_date_persian': capture_date_persian,
+                    'tweet_time_persian': None,
                     'tweet_url': normalized_url,
                     'has_videos': len(video_paths) > 0,
                     'ocr_author': '',  # Not needed with scraping
                     'ocr_text': main_text,  # Main tweet text
-                    'quoted_tweet': quoted_tweet  # Quoted tweet info (author, handle, text) or None
+                    'quoted_tweet': quoted_tweet,  # Quoted tweet info (author, handle, text) or None
+                    'video_thumbnail_only': False,
+                    'capture_source': 'screenshot',
                 }
         except Exception as e:
             print(f"Error in capture_tweet: {e}")
@@ -384,15 +631,20 @@ class TwitterClient:
 
                     return {
                         'screenshot_path': output_path,
+                        'image_paths': [],
                         'video_paths': [],
                         'username': username,
                         'tweet_id': tweet_id,
                         'capture_time': capture_time,
                         'capture_date_persian': capture_date_persian,
+                        'tweet_time_persian': None,
                         'tweet_url': normalized_url,
                         'has_videos': False,
                         'ocr_author': ocr_author,
-                        'ocr_text': ocr_text
+                        'ocr_text': ocr_text,
+                        'quoted_tweet': None,
+                        'video_thumbnail_only': False,
+                        'capture_source': 'screenshot_fallback',
                     }
             except Exception as fallback_error:
                 print(f"Fallback capture also failed: {fallback_error}")
@@ -732,6 +984,71 @@ class TwitterClient:
             return queue_id, position
 
         return None, "Failed to add to queue"
+
+    def cleanup_orphaned_media(self, max_age_seconds=21600):
+        """Unlink media files that no scheduled post still references.
+
+        A file in screenshots/, videos/, or api_media/ is considered orphaned
+        when (a) it is not referenced by any row in tweets_line.media and
+        (b) its mtime is older than ``max_age_seconds`` (default 6h). The age
+        gate keeps us from racing freshly-captured files that have not yet
+        been written into tweets_line.
+        """
+        referenced = self.db.get_all_media_paths_in_line()
+        now = time.time()
+        removed = 0
+        for d in (self.screenshots_dir, self.videos_dir, self.api_media_dir):
+            if not os.path.isdir(d):
+                continue
+            try:
+                names = os.listdir(d)
+            except OSError as e:
+                print(f"[janitor] could not list {d}: {e}")
+                continue
+            for name in names:
+                path = os.path.join(d, name)
+                if not os.path.isfile(path):
+                    continue
+                if path in referenced:
+                    continue
+                try:
+                    age = now - os.path.getmtime(path)
+                except OSError:
+                    continue
+                if age < max_age_seconds:
+                    continue
+                try:
+                    os.remove(path)
+                    removed += 1
+                except OSError as e:
+                    print(f"[janitor] could not remove {path}: {e}")
+        if removed:
+            print(f"[janitor] removed {removed} orphaned media file(s)")
+        return removed
+
+    def start_media_janitor(self, interval_seconds=1800, max_age_seconds=21600):
+        """Spawn a daemon thread that periodically calls cleanup_orphaned_media."""
+        if getattr(self, '_janitor_thread', None) and self._janitor_thread.is_alive():
+            return
+
+        def loop():
+            # Brief startup grace period so freshly-captured files aren't
+            # judged by a janitor that ran the moment the app booted.
+            time.sleep(30)
+            while True:
+                try:
+                    self.cleanup_orphaned_media(max_age_seconds=max_age_seconds)
+                except Exception as e:
+                    print(f"[janitor] error: {e}")
+                    try:
+                        self.db.error_log(e)
+                    except Exception:
+                        pass
+                time.sleep(interval_seconds)
+
+        self._janitor_thread = threading.Thread(target=loop, daemon=True)
+        self._janitor_thread.start()
+        print(f"Media janitor started (interval={interval_seconds}s, max_age={max_age_seconds}s)")
 
     def get_reference_tweet_snapshot_as_media(self, tweet_url, tweet_id):
         """

@@ -7,12 +7,12 @@
 <img src="https://img.shields.io/badge/uv-DE5FE9?style=for-the-badge&logo=uv&logoColor=white" alt="uv" />
 <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL" />
-<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Telegram_logo.svg/800px-Telegram_logo.svg.png" style="width:3%" />
+<img src="https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram" />
 </div>
 
 ----------
 
-Zam: A Telegram Bot for capturing and posting tweets to Telegram channels
+Zam: A Telegram Bot for fetching and posting tweets to Telegram channels
 
 <table border="0">
  <tr>
@@ -37,16 +37,20 @@ Zam: A Telegram Bot for capturing and posting tweets to Telegram channels
 ----------
 ## Overview
 <p align="justify">
-Zam is a Telegram bot that captures tweets as screenshots and allows admins to schedule them for posting to a Telegram channel. It uses a priority-based queue system where admin requests are processed before user suggestions.
+Zam is a Telegram bot that fetches tweets via the <a href="https://scrapebadger.com">ScrapeBadger</a> API and posts them to a Telegram channel with their native media (photos and videos). Admins can schedule posts, and user suggestions are supported through a separate bot. The system uses a priority-based queue where admin requests are processed before user suggestions.
 </p>
 
-> **Note:** Looking for the Twitter API version? The legacy code that uses the Twitter/X API (Tweepy) is available in the [`legacy` branch](https://github.com/AminAlam/Zam/tree/legacy). This version uses screenshot capture instead, as the Twitter API became restricted/expensive after the X acquisition.
+> **Note:** The bot supports two capture methods controlled by the `ZAM_CAPTURE_METHOD` env var: `scrapebadger` (default, API-based) fetches tweet data and media via the ScrapeBadger API with video downloads powered by yt-dlp. `screenshot` (legacy) captures tweets as screenshots using headless Chrome. The API method is faster, more reliable, and produces higher-quality results. Looking for the old Twitter API (Tweepy) version? It's in the [`legacy` branch](https://github.com/AminAlam/Zam/tree/legacy).
 
 ----------
 ## Features
 
 ### Core Features
-- 📸 **Tweet Screenshot Capture**: Captures tweets as high-quality screenshots using headless Chrome with full Persian/Arabic font support
+- 🌐 **API-Based Tweet Fetching**: Fetches tweet text and metadata via the ScrapeBadger API — no browser rendering needed
+- 📸 **Native Media Delivery**: Downloads and sends tweet photos and videos directly to Telegram (no screenshots)
+- 🎬 **Video Downloads**: Automatically downloads tweet videos using yt-dlp with quality selection and auth support
+- ✔️ **Verified Badge**: Displays author display names with a blue verified badge for verified accounts
+- 🕐 **Accurate Timestamps**: Shows the tweet's original post time converted to Tehran timezone (Asia/Tehran via IANA tz database)
 - 🔄 **Priority Queue System**: Admin tweets are processed before user suggestions
 - ⏰ **Smart Auto-Scheduling**: Intelligent scheduling algorithm with peak hour optimization and minimum gap enforcement
 - 🐳 **Docker Containerized**: Easy deployment with Docker Compose
@@ -54,6 +58,7 @@ Zam is a Telegram bot that captures tweets as screenshots and allows admins to s
 - 👥 **Multi-Bot Architecture**: Separate bots for admins and user suggestions
 - 🚦 **Rate Limiting**: Configurable hourly limits for user suggestions
 - 🇮🇷 **Persian Calendar Support**: Displays dates in Persian/Jalali calendar
+- 📸 **Screenshot Fallback**: Falls back to headless Chrome screenshot capture if the API is unavailable
 
 ### Admin Bot Features
 - 📊 **Monitoring Dashboard** (`/stats`): Real-time statistics including queue status, scheduled posts, and peak hour availability
@@ -218,6 +223,20 @@ CHANNEL_NAME=@YourChannelName
 ADMIN_IDS=admin1,admin2,admin3    # Telegram usernames without @
 ```
 
+### Tweet Capture
+```bash
+# Capture method: "scrapebadger" (default) or "screenshot" (legacy Chromium)
+ZAM_CAPTURE_METHOD=scrapebadger
+
+# ScrapeBadger API key (required for scrapebadger method)
+# Get one at https://scrapebadger.com
+SCRAPEBADGER_API_KEY=sb_live_your_api_key
+
+# Twitter/X auth token (optional, helps yt-dlp with protected/age-restricted videos)
+# Get from browser DevTools > Application > Cookies > x.com > auth_token
+AUTH_TOKEN=your_twitter_auth_token
+```
+
 ----------
 ## Usage
 
@@ -288,10 +307,10 @@ docker compose run app uv run python -m src.main --time_diff 3:30 --user_tweet_l
 
 1. **Submit a Tweet**: Send a tweet URL to either the admin or suggestions bot
 2. **Queue Processing**: The tweet is added to a priority queue (admin tweets have higher priority)
-3. **Screenshot Capture**: A background worker captures the tweet as a screenshot
-4. **Admin Review**: The captured tweet is sent to the admin channel with scheduling options
+3. **Fetch & Download**: A background worker fetches the tweet via ScrapeBadger API (text, author, media metadata, quoted tweets) and downloads photos directly; videos are downloaded via yt-dlp
+4. **Admin Review**: The tweet text and native media are sent to the admin channel with scheduling options
 5. **Schedule or Post**: Admins can schedule the tweet manually or use **Auto timing** for smart scheduling
-6. **Channel Posting**: At the scheduled time, the tweet is posted to the main channel
+6. **Channel Posting**: At the scheduled time, the tweet is posted to the main channel with all media attached
 
 ### Smart Auto-Scheduling
 
@@ -315,60 +334,67 @@ The "Auto timing" feature uses an intelligent algorithm to schedule tweets:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Docker Compose                        │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │         App Container (uv + Python 3.11)         │    │
-│  │  ┌─────────────┐  ┌─────────────────────────┐   │    │
-│  │  │ Admin Bot   │  │ Suggestions Bot         │   │    │
-│  │  └──────┬──────┘  └───────────┬─────────────┘   │    │
-│  │         │                     │                  │    │
-│  │         └──────────┬──────────┘                  │    │
-│  │                    ▼                             │    │
-│  │         ┌─────────────────────┐                  │    │
-│  │         │   Queue Worker      │                  │    │
-│  │         │  (Priority-based)   │                  │    │
-│  │         └──────────┬──────────┘                  │    │
-│  │                    ▼                             │    │
-│  │         ┌─────────────────────┐                  │    │
-│  │         │   Tweet Capture     │                  │    │
-│  │         │  (Headless Chrome)  │                  │    │
-│  │         └─────────────────────┘                  │    │
-│  └─────────────────────────────────────────────────┘    │
-│                          │                               │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │           PostgreSQL Container                   │    │
-│  │  ┌─────────────────────────────────────────┐    │    │
-│  │  │  Tables: tweets, tweet_queue, states,   │    │    │
-│  │  │  tweets_line, errors, user_feedback     │    │    │
-│  │  └─────────────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         Docker Compose                           │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │            App Container (uv + Python 3.11)               │   │
+│  │  ┌─────────────┐  ┌─────────────────────────┐            │   │
+│  │  │ Admin Bot   │  │ Suggestions Bot         │            │   │
+│  │  └──────┬──────┘  └───────────┬─────────────┘            │   │
+│  │         └──────────┬──────────┘                           │   │
+│  │                    ▼                                      │   │
+│  │         ┌─────────────────────┐                           │   │
+│  │         │   Queue Worker      │                           │   │
+│  │         │  (Priority-based)   │                           │   │
+│  │         └──────────┬──────────┘                           │   │
+│  │                    ▼                                      │   │
+│  │  ┌──────────────────────────┐  ┌───────────────────────┐ │   │
+│  │  │  ScrapeBadger API Client │  │  Screenshot Capture   │ │   │
+│  │  │  (tweet text & photos)   │  │  (Headless Chrome)    │ │   │
+│  │  └────────────┬─────────────┘  │  [fallback]           │ │   │
+│  │               │                └───────────────────────┘ │   │
+│  │               ▼                                          │   │
+│  │  ┌──────────────────────────┐                            │   │
+│  │  │  yt-dlp Video Downloader │                            │   │
+│  │  │  (tweet videos → MP4)    │                            │   │
+│  │  └──────────────────────────┘                            │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                          │                                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │           PostgreSQL Container                            │   │
+│  │  ┌──────────────────────────────────────────────────┐    │   │
+│  │  │  Tables: tweets, tweet_queue, states,            │    │   │
+│  │  │  tweets_line, errors, user_feedback              │    │   │
+│  │  └──────────────────────────────────────────────────┘    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Project Structure
 
 ```
 Zam/
-├── pyproject.toml          # Project configuration & dependencies
-├── uv.lock                 # Lockfile for reproducible builds
-├── .python-version         # Python version specification
-├── Dockerfile              # Docker build with uv
-├── docker compose.yml      # Container orchestration
-├── src/                    # Main application code
-│   ├── main.py             # Entry point
-│   ├── telegram_backend.py # Telegram bot handlers
-│   ├── twitter_backend.py  # Tweet capture & queue
-│   ├── utils.py            # Utility functions
-│   ├── ocr.py              # OCR text extraction
-│   ├── migrations.py       # Database migrations
-│   └── database/           # Database module
-│       ├── database.py     # Database operations
-│       └── init.sql        # Schema definitions
-├── tweetcapture/           # Local tweet screenshot package
-│   ├── pyproject.toml      # Package configuration
-│   └── tweetcapture/       # Package source
-└── tests/                  # Test suite
+├── pyproject.toml            # Project configuration & dependencies
+├── .python-version           # Python version specification
+├── Dockerfile                # Docker build with uv
+├── docker-compose.yml        # Container orchestration
+├── src/                      # Main application code
+│   ├── main.py               # Entry point
+│   ├── telegram_backend.py   # Telegram bot handlers & scheduling
+│   ├── twitter_backend.py    # Tweet capture dispatcher & queue
+│   ├── scrapebadger_client.py # ScrapeBadger API client (fetch tweets & download photos)
+│   ├── video_downloader.py   # yt-dlp wrapper (download tweet videos)
+│   ├── configs.py            # Centralized configuration classes
+│   ├── utils.py              # Utility functions
+│   ├── ocr.py                # OCR text extraction (legacy fallback)
+│   ├── migrations.py         # Database migrations
+│   └── database/             # Database module
+│       ├── database.py       # Database operations
+│       └── init.sql          # Schema definitions
+├── tweetcapture/             # Local tweet screenshot package (legacy fallback)
+│   ├── pyproject.toml        # Package configuration
+│   └── tweetcapture/         # Package source
+└── tests/                    # Test suite
 ```
 
 ----------
