@@ -88,6 +88,8 @@ RUN uv sync --no-dev
 # Create simplified entrypoint script
 # Xvfb and PulseAudio are now running in a separate service
 RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
 # Clean up any stale lock files (defensive, should not be needed with separate service)\n\
 rm -f /tmp/.X99-lock 2>/dev/null || true\n\
 \n\
@@ -106,6 +108,21 @@ if [ ! -S /tmp/.X11-unix/X99 ]; then\n\
   echo "ERROR: X display :99 not available after 30 seconds"\n\
   exit 1\n\
 fi\n\
+\n\
+# Fail fast (with a clear message) if a bind mount or bad rebuild masks the source.\n\
+# Without this guard, the process crashes in an opaque "No module named src.main" loop.\n\
+cd /app\n\
+if [ ! -f /app/src/main.py ] || [ ! -f /app/src/__init__.py ]; then\n\
+  echo "ERROR: /app/src is missing main.py or __init__.py."\n\
+  echo "Contents of /app/src:"\n\
+  ls -la /app/src 2>/dev/null || echo "  (directory does not exist)"\n\
+  echo "Hint: if you mount ./src as a volume in docker-compose, make sure the host directory is complete."\n\
+  exit 1\n\
+fi\n\
+\n\
+# Ensure /app is on sys.path so `-m src.main` works even when the editable\n\
+# install was masked by a bind mount that replaced /app/src after image build.\n\
+export PYTHONPATH="/app:${PYTHONPATH:-}"\n\
 \n\
 # Run the main application using uv\n\
 exec uv run python -m src.main\n\
