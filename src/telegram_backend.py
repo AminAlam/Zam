@@ -252,6 +252,10 @@ class TelegramBot:
                 else:
                     media_tmp = InputMediaPhoto(media_source, caption=caption, parse_mode="HTML")
             elif media[1] == "video" or media[1] == "animated_gif":
+                if not media[0].startswith("http"):
+                    media_url = open(media[0], 'rb')
+                else:
+                    media_url = media[0]
                 if entities:
                     media_tmp = InputMediaVideo(media_source, caption=caption, caption_entities=caption_entities)
                 else:
