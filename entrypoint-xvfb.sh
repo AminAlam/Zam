@@ -13,10 +13,12 @@ if command -v dbus-daemon >/dev/null 2>&1; then
   dbus-daemon --system --fork 2>/dev/null || echo "warn: dbus-daemon failed to start (continuing)"
 fi
 
-# Pre-create the pulse cookie dir so the "Failed to open cookie file" warnings
-# stop. We don't need real auth — module-native-protocol-unix uses auth-anonymous=1.
+# Pre-create the pulse cookie *directory* (not the cookie file — pulseaudio
+# wants to truncate/write that itself, and an empty pre-existing file
+# triggers "Failed to truncate cookie file: Invalid argument"). We don't
+# need real auth — module-native-protocol-unix uses auth-anonymous=1.
 mkdir -p /root/.config/pulse
-touch /root/.config/pulse/cookie
+chmod 700 /root/.config/pulse
 
 # Start Xvfb
 Xvfb :99 -screen 0 1280x1200x24 -ac +extension GLX +render -noreset &
