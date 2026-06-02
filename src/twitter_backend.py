@@ -985,6 +985,71 @@ class TwitterClient:
 
         return None, "Failed to add to queue"
 
+    def cleanup_orphaned_media(self, max_age_seconds=21600):
+        """Unlink media files that no scheduled post still references.
+
+        A file in screenshots/, videos/, or api_media/ is considered orphaned
+        when (a) it is not referenced by any row in tweets_line.media and
+        (b) its mtime is older than ``max_age_seconds`` (default 6h). The age
+        gate keeps us from racing freshly-captured files that have not yet
+        been written into tweets_line.
+        """
+        referenced = self.db.get_all_media_paths_in_line()
+        now = time.time()
+        removed = 0
+        for d in (self.screenshots_dir, self.videos_dir, self.api_media_dir):
+            if not os.path.isdir(d):
+                continue
+            try:
+                names = os.listdir(d)
+            except OSError as e:
+                print(f"[janitor] could not list {d}: {e}")
+                continue
+            for name in names:
+                path = os.path.join(d, name)
+                if not os.path.isfile(path):
+                    continue
+                if path in referenced:
+                    continue
+                try:
+                    age = now - os.path.getmtime(path)
+                except OSError:
+                    continue
+                if age < max_age_seconds:
+                    continue
+                try:
+                    os.remove(path)
+                    removed += 1
+                except OSError as e:
+                    print(f"[janitor] could not remove {path}: {e}")
+        if removed:
+            print(f"[janitor] removed {removed} orphaned media file(s)")
+        return removed
+
+    def start_media_janitor(self, interval_seconds=1800, max_age_seconds=21600):
+        """Spawn a daemon thread that periodically calls cleanup_orphaned_media."""
+        if getattr(self, '_janitor_thread', None) and self._janitor_thread.is_alive():
+            return
+
+        def loop():
+            # Brief startup grace period so freshly-captured files aren't
+            # judged by a janitor that ran the moment the app booted.
+            time.sleep(30)
+            while True:
+                try:
+                    self.cleanup_orphaned_media(max_age_seconds=max_age_seconds)
+                except Exception as e:
+                    print(f"[janitor] error: {e}")
+                    try:
+                        self.db.error_log(e)
+                    except Exception:
+                        pass
+                time.sleep(interval_seconds)
+
+        self._janitor_thread = threading.Thread(target=loop, daemon=True)
+        self._janitor_thread.start()
+        print(f"Media janitor started (interval={interval_seconds}s, max_age={max_age_seconds}s)")
+
     def get_reference_tweet_snapshot_as_media(self, tweet_url, tweet_id):
         """
         Capture a reference tweet (quoted or replied-to) as media.

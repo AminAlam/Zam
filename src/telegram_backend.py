@@ -224,7 +224,12 @@ class TelegramBot:
         update.message.reply_text('Hello {}'.format(update.message.from_user.first_name))
 
     def make_media_array(self, tg_text, media_list, entities=None):
-        """Create an array of media for sending to Telegram."""
+        """Create an array of media for sending to Telegram.
+
+        Local files are read into memory inside a ``with`` block so the OS
+        file handle is closed before the upload begins. Leaving raw ``open()``
+        handles for python-telegram-bot to consume leaked FDs across retries.
+        """
         media_array = []
         for indx, media in enumerate(media_list):
             if indx == 0:
@@ -234,24 +239,23 @@ class TelegramBot:
                 caption = ""
                 caption_entities = None
 
+            path = media[0]
+            if isinstance(path, str) and path.startswith("http"):
+                media_source = path
+            else:
+                with open(path, 'rb') as fh:
+                    media_source = fh.read()
+
             if media[1] == "photo":
-                if not media[0].startswith("http"):
-                    media_url = open(media[0], 'rb')
-                else:
-                    media_url = media[0]
                 if entities:
-                    media_tmp = InputMediaPhoto(media_url, caption=caption, caption_entities=caption_entities)
+                    media_tmp = InputMediaPhoto(media_source, caption=caption, caption_entities=caption_entities)
                 else:
-                    media_tmp = InputMediaPhoto(media_url, caption=caption, parse_mode="HTML")
+                    media_tmp = InputMediaPhoto(media_source, caption=caption, parse_mode="HTML")
             elif media[1] == "video" or media[1] == "animated_gif":
-                if not media[0].startswith("http"):
-                    media_url = open(media[0], 'rb')
-                else:
-                    media_url = media[0]
                 if entities:
-                    media_tmp = InputMediaVideo(media_url, caption=caption, caption_entities=caption_entities)
+                    media_tmp = InputMediaVideo(media_source, caption=caption, caption_entities=caption_entities)
                 else:
-                    media_tmp = InputMediaVideo(media_url, caption=caption, parse_mode="HTML")
+                    media_tmp = InputMediaVideo(media_source, caption=caption, parse_mode="HTML")
             media_array.append(media_tmp)
         return media_array
 
@@ -755,12 +759,23 @@ class TelegramBot:
 
     def callback_query_handler(self, update, context=None):
         """Handle callback queries from inline keyboards."""
-        user_name = self.get_user_name(update)
+        admin_bool, user_name = self.check_admin(update)
         query = update.callback_query
         query_text = query.data.split('|')
         query_type = query_text[0]
         query_dict = query.to_dict()
         chat_id = query_dict['message']['chat']['id']
+
+        # TIME/CANCEL mutate scheduling state and must be admin-only. Without
+        # this gate, anyone added to the admin or suggestions chat could
+        # schedule or cancel posts. SENT is read-only (popup with sender info)
+        # so non-admins may click it.
+        if query_type in ('TIME', 'CANCEL') and not admin_bool:
+            try:
+                query.answer(text="Not allowed.", show_alert=True)
+            except Exception:
+                pass
+            return
 
         # Check if this bot is responsible for this chat (Admin vs Suggestions)
         # This prevents "Message_id_invalid" errors when both bots receive the same callback
@@ -1038,6 +1053,12 @@ class TelegramAdminBot(TelegramBot):
 
         # Start the queue worker
         self.twitter_api.start_queue_worker()
+
+        # Start the media janitor: garbage-collects screenshots/videos/api_media
+        # files that no row in tweets_line still references (e.g. tweets the
+        # admin never scheduled, cancelled tweets, or orphan duplicates from
+        # batch posts).
+        self.twitter_api.start_media_janitor()
 
     def _handle_captured_tweet(self, tweet_data):
         """

@@ -243,6 +243,33 @@ class Database:
             self.error_log(e)
             return []
 
+    def get_all_media_paths_in_line(self):
+        """Return the set of file paths currently referenced by tweets_line.media.
+
+        Used by the media janitor to distinguish files still needed by a
+        pending/scheduled post from genuine orphans.
+        """
+        paths = set()
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT media FROM tweets_line WHERE media IS NOT NULL')
+                for (media_json,) in cursor.fetchall():
+                    if not media_json:
+                        continue
+                    try:
+                        items = json.loads(media_json)
+                    except (TypeError, ValueError):
+                        continue
+                    if not items:
+                        continue
+                    for m in items:
+                        if isinstance(m, (list, tuple)) and m and isinstance(m[0], str):
+                            paths.add(m[0])
+        except Exception as e:
+            self.error_log(e)
+        return paths
+
     def remove_old_tweets_in_line(self, num_tweets_to_preserve=1000):
         """Remove old tweets from the line, keeping only the most recent ones."""
         try:
